@@ -13,10 +13,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Render
         run: python3 render.py
-      - name: Push Result
-        run: |
-          git config --global user.name "Viracut-Bot"
-          git config --global user.email "bot@viracut.com"
-          git add result.json
-          git commit -m "Video ready" || exit 0
-          git push origin main
+      - name: Sauvegarder la vidéo
+        uses: actions/upload-artifact@v4
+        with:
+          name: ma-video-finale
+          path: output.mp4
