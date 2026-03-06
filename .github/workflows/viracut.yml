@@ -4,6 +4,8 @@ on:
 jobs:
   render:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -13,11 +15,11 @@ jobs:
           python-version: '3.9'
       - name: Install FFmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - name: Run Render
+      - name: Montage Viral
         run: python render.py
-      - name: Upload Video
+      - name: Verifier et Sauvegarder
         uses: actions/upload-artifact@v4
         with:
-          name: montage-viral
+          name: ma-video-virale
           path: output.mp4
           if-no-files-found: error
