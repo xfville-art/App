@@ -18,14 +18,10 @@ def start():
         with open(name, "wb") as fout: fout.write(base64.b64decode(v['data']))
         files.append(name)
 
-    if len(files) < 2:
-        print("Erreur : Ajoutez au moins 2 vidéos.")
-        return
+    if len(files) < 2: return
 
-    # 2. Montage Hook / Core / Punchline + Look Cinématique
-    vf = "eq=contrast=1.1:saturation=1.3,unsharp"
-    
-    # Séquences
+    # 2. Montage Cinématique
+    vf = "eq=contrast=1.1:saturation=1.3"
     os.system(f"ffmpeg -i {files[0]} -t 2 -vf {vf} -c:v libx264 -preset superfast hook.mp4")
     
     dur = get_duration(files[1])
@@ -38,17 +34,17 @@ def start():
     with open("list.txt", "w") as f:
         for m in ["hook.mp4", "core.mp4", "punch.mp4"]: f.write(f"file '{m}'\n")
     
-    # Création du vrai output.mp4
     os.system("ffmpeg -f concat -safe 0 -i list.txt -c:v libx264 -pix_fmt yuv420p output.mp4")
 
-    # 4. Envoi du résultat pour l'application
+    # 4. CRUCIAL : Envoi du résultat encodé pour l'application mobile
     with open("output.mp4", "rb") as f:
         res_b64 = base64.b64encode(f.read()).decode()
     
+    # Ce fichier est celui que l'App attend pour lancer le téléchargement
     with open("result.json", "w") as f:
         json.dump({"video": res_b64}, f)
     
-    print("TERMINÉ : output.mp4 et result.json créés.")
+    print("TERMINÉ : result.json créé pour l'App.")
 
 if __name__ == "__main__":
     start()
