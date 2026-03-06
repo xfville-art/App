@@ -5,7 +5,7 @@ jobs:
   render:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # CRUCIAL : Autorise l'écriture du résultat
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -16,10 +16,10 @@ jobs:
       - name: Render
         run: python3 render.py
 
-      - name: Commit et Push du résultat
+      - name: Push Result
         run: |
           git config --global user.name "Viracut-Bot"
-          git config --global user.email "actions@github.com"
+          git config --global user.email "bot@viracut.com"
           git add result.json
-          git commit -m "Vidéo prête pour téléchargement" || echo "Pas de changement"
-          git push
+          git commit -m "Upload video" || exit 0
+          git push origin main
