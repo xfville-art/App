@@ -3,28 +3,30 @@ on:
   workflow_dispatch:
     inputs:
       gist_id:
+        description: Gist ID
         required: true
+        type: string
+      token:
+        description: Token
+        required: true
+        type: string
 jobs:
   render:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - name: FFmpeg Render
+      - name: Render
+        env:
+          GIST_ID: ${{ inputs.gist_id }}
+          GH_TOKEN: ${{ inputs.token }}
         run: |
-          sudo apt-get install -y ffmpeg
-          curl -sL https://api.github.com/gists/${{ github.event.inputs.gist_id }} | jq -r '.files["payload.json"].content' > p.json
-          python3 -c "
-import json, base64, subprocess, os
-with open('p.json') as f: p = json.load(f)
-for i, v in enumerate(p['videos']):
-    with open(f'v{i}.mp4', 'wb') as fv: fv.write(base64.b64decode(v['data']))
-inputs = []
-for i in range(len(p['videos'])):
-    inputs += ['-i', f'v{i}.mp4']
-cmd = ['ffmpeg', '-y'] + inputs + ['-filter_complex', 'concat=n='+str(len(p['videos']))+':v=1:a=1[v][a]', '-map', '[v]', '-map', '[a]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-vsync', 'cfr', '-r', '30', '-async', '1', 'out.mp4']
-subprocess.run(cmd)
-"
+          sudo apt-get install -y ffmpeg -q
+          curl -sL -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/gists/$GIST_ID" | python3 -c "import sys,json;f=list(json.load(sys.stdin)['files'].values())[0];open('p.json','w').write(f['content']);print('payload',len(f['content']),'bytes')"
+          echo aW1wb3J0IGpzb24sc3VicHJvY2VzcyxvcyxiYXNlNjQsc3lzCnA9anNvbi5sb2FkKG9wZW4oJ3AuanNvbicpKQpvcy5tYWtlZGlycygnaScsZXhpc3Rfb2s9VHJ1ZSkKZm9yIG4sdiBpbiBlbnVtZXJhdGUocFsndmlkZW9zJ10pOgogICAgb3BlbihmJ2kvdntufS5tcDQnLCd3YicpLndyaXRlKGJhc2U2NC5iNjRkZWNvZGUodlsnZGF0YSddKSkKZz1mbG9hdChwWydzZXR0aW5ncyddLmdldCgnZ3JhZGUnLDAuNykpCnNlZ3M9cFsnc2VnbWVudHMnXQppbnM9W107dmZmPVtdO2N2PVtdO2NhPVtdCmZvciBuLHMgaW4gZW51bWVyYXRlKHNlZ3MpOgogICAgdmk9c1sndmlkSWR4J107c3Q9ZmxvYXQoc1snc3RhcnQnXSk7ZD1mbG9hdChzWydlbmQnXSktc3QKICAgIGlucys9Wyctc3MnLHN0cihzdCksJy10JyxzdHIoZCksJy1pJyxmJ2kvdnt2aX0ubXA0J10KICAgIHZmPWYnc2NhbGU9NzIwOjEyODA6Zm9yY2Vfb3JpZ2luYWxfYXNwZWN0X3JhdGlvPWRlY3JlYXNlLHBhZD03MjA6MTI4MDoob3ctaXcpLzI6KG9oLWloKS8yOmJsYWNrLGZwcz0zMCxlcT1jb250cmFzdD17MStnKjAuMjouMmZ9OmJyaWdodG5lc3M9ey1nKjAuMDU6LjNmfTpzYXR1cmF0aW9uPTEuMSxzZXRwdHM9UFRTLVNUQVJUUFRTJwogICAgdmZmKz1bZidbe259OnZde3ZmfVt2e259XScsZidbe259OmFdYXJlc2FtcGxlPTQ4MDAwLGFzZXRwdHM9UFRTLVNUQVJUUFRTW2F7bn1dJ10KICAgIGN2Kz1bZidbdntufV0nXTtjYSs9W2YnW2F7bn1dJ10KbnM9bGVuKHNlZ3MpCnZmZis9WycnLmpvaW4oY3YpKycnLmpvaW4oY2EpK2YnY29uY2F0PW49e25zfTp2PTE6YT0xW291dHZdW291dGFdJ10KY21kPVsnZmZtcGVnJywnLXknXStpbnMrWyctZmlsdGVyX2NvbXBsZXgnLCc7Jy5qb2luKHZmZiksJy1tYXAnLCdbb3V0dl0nLCctbWFwJywnW291dGFdJywnLWM6dicsJ2xpYngyNjQnLCctcHJlc2V0JywnZmFzdCcsJy1jcmYnLCcyMicsJy1jOmEnLCdhYWMnLCctYjphJywnMTkyaycsJy1yJywnMzAnLCctdnN5bmMnLCdjZnInLCctbW92ZmxhZ3MnLCcrZmFzdHN0YXJ0Jywnb3V0cHV0Lm1wNCddCnI9c3VicHJvY2Vzcy5ydW4oY21kLGNhcHR1cmVfb3V0cHV0PVRydWUsdGV4dD1UcnVlKQpwcmludChyLnN0ZGVyclstNTAwOl0gaWYgci5yZXR1cm5jb2RlIGVsc2UgZidPSyB7b3MucGF0aC5nZXRzaXplKCJvdXRwdXQubXA0IikvMTAyNC8xMDI0Oi4xZn1NQicpCnN5cy5leGl0KHIucmV0dXJuY29kZSkK | base64 -d > render.py
+          python3 render.py
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: output
-          path: out.mp4
+          name: viracut-output
+          path: output.mp4
+          retention-days: 1
