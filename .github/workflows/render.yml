@@ -8,7 +8,7 @@ jobs:
   render:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch Video
+      - name: Process
         run: |
           sudo apt-get install -y ffmpeg jq
           RELEASE_DATA=$(curl -sH "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/${{ github.repository }}/releases/${{ github.event.inputs.release_id }}")
