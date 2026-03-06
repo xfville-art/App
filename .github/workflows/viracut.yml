@@ -1,26 +1,22 @@
 name: VIRACUT
 on:
   workflow_dispatch:
-
 jobs:
   render:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Checkout Code
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install FFmpeg
+      - name: Setup FFmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
-
-      - name: Run Python Script
+      - name: Render
         run: python3 render.py
-
-      - name: Upload Result to Repo
+      - name: Push Result
         run: |
           git config --global user.name "Viracut-Bot"
           git config --global user.email "bot@viracut.com"
           git add result.json
           git commit -m "Video ready" || exit 0
-          git push
+          git push origin main
