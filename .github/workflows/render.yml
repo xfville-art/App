@@ -1,36 +1,22 @@
-name: VIRACUT_RENDER
+name: RENDU_PRO
 on:
   workflow_dispatch:
     inputs:
-      gist_id:
+      release_id:
         required: true
 jobs:
   render:
     runs-on: ubuntu-latest
     steps:
-      - name: Build Video
+      - name: Fetch Video
         run: |
           sudo apt-get install -y ffmpeg jq
-          echo "Récupération du payload..."
-          curl -sL https://api.github.com/gists/${{ github.event.inputs.gist_id }} > full_gist.json
-          # Reconstruction des fichiers à partir des chunks
-          jq -r '.files | to_entries[] | .value.content' full_gist.json > combined.txt
-          python3 -c "
-import json, base64, subprocess
-with open('combined.txt') as f: data = json.load(f)
-v_list = []
-for i, v_data in enumerate(data['v']):
-    fname = f'input_{i}.mp4'
-    with open(fname, 'wb') as fv: fv.write(base64.b64decode(v_data))
-    v_list.append(fname)
-filter_str = ''.join([f'[{i}:v][{i}:a]' for i in range(len(v_list))]) + f'concat=n={len(v_list)}:v=1:a=1[v][a]'
-cmd = ['ffmpeg', '-y']
-for f in v_list: cmd += ['-i', f]
-cmd += ['-filter_complex', filter_str, '-map', '[v]', '-map', '[a]', '-c:v', 'libx264', '-preset', 'fast', '-crf', '22', '-vsync', 'cfr', 'output.mp4']
-subprocess.run(cmd)
-"
+          RELEASE_DATA=$(curl -sH "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/${{ github.repository }}/releases/${{ github.event.inputs.release_id }}")
+          ASSET_URL=$(echo "$RELEASE_DATA" | jq -r '.assets[0].url')
+          curl -sL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/octet-stream" "$ASSET_URL" > input.mp4
+          ffmpeg -i input.mp4 -c:v libx264 -preset fast -crf 22 -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920" output.mp4
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: viracut-result
+          name: final-video
           path: output.mp4
