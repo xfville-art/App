@@ -1,6 +1,7 @@
 name: VIRACUT
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Ligne 3 : Doit être exactement comme ça
+
 jobs:
   render:
     runs-on: ubuntu-latest
@@ -21,5 +22,5 @@ jobs:
           git config --global user.name "Viracut-Bot"
           git config --global user.email "bot@viracut.com"
           git add result.json
-          git commit -m "Upload video" || exit 0
-          git push origin main
+          git commit -m "Vidéo prête" || exit 0
+          git push
