@@ -1,28 +1,25 @@
 name: VIRACUT
 on:
-  workflow_dispatch: # Se lance quand le téléphone envoie le signal
-
+  workflow_dispatch:
 jobs:
   render:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Autorise GitHub à renvoyer le résultat vers ton dépôt
     steps:
-      - name: Récupération du code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Installation FFmpeg
+      - name: Setup FFmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      - name: Configuration Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.12'
-
-      - name: Montage Vidéo
+      - name: Render
         run: python3 render.py
 
-      - name: Sauvegarde du résultat
-        uses: actions/upload-artifact@v4
-        with:
-          name: video-finale
-          path: output.mp4
-
+      - name: Push Result
+        run: |
+          git config --global user.name "Viracut-Bot"
+          git config --global user.email "bot@viracut.com"
+          git add result.json
+          git commit -m "Vidéo prête" || exit 0
+          git push
