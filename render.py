@@ -5,43 +5,50 @@ def get_duration(file):
     return float(subprocess.check_output(cmd, shell=True))
 
 def start():
-    print("--- VIRACUT ENGINE V7 : CINEMATIC ---")
+    print("--- VIRACUT V8 : MONTAGE PRO ---")
     if not os.path.exists('p.json'): return
 
     with open('p.json', 'r') as f:
         data = json.load(f)
 
+    # 1. Extraction
     files = []
     for i, v in enumerate(data.get('videos', [])):
         name = f"raw_{i}.mp4"
         with open(name, "wb") as fout: fout.write(base64.b64decode(v['data']))
         files.append(name)
 
-    if len(files) < 2: return
+    if len(files) < 2:
+        print("Erreur : Ajoutez au moins 2 vidéos.")
+        return
 
-    # Filtre Cinématique : Contraste +1.1, Saturation +1.2
-    vf = "eq=contrast=1.1:saturation=1.2"
-
-    # HOOK (2s) / CORE (5s) / PUNCHLINE (3s)
-    os.system(f"ffmpeg -i {files[0]} -t 2 -vf {vf} -c:v libx264 -an hook.mp4")
+    # 2. Montage Hook / Core / Punchline + Look Cinématique
+    vf = "eq=contrast=1.1:saturation=1.3,unsharp"
+    
+    # Séquences
+    os.system(f"ffmpeg -i {files[0]} -t 2 -vf {vf} -c:v libx264 -preset superfast hook.mp4")
     
     dur = get_duration(files[1])
-    os.system(f"ffmpeg -ss {max(0, dur/2-2.5)} -i {files[1]} -t 5 -vf {vf} -c:v libx264 -an core.mp4")
+    os.system(f"ffmpeg -ss {max(0, dur/2-2)} -i {files[1]} -t 4 -vf {vf} -c:v libx264 -preset superfast core.mp4")
     
     dur_last = get_duration(files[-1])
-    os.system(f"ffmpeg -ss {dur_last-3} -i {files[-1]} -t 3 -vf {vf} -c:v libx264 -an punch.mp4")
+    os.system(f"ffmpeg -ss {max(0, dur_last-3)} -i {files[-1]} -t 3 -vf {vf} -c:v libx264 -preset superfast punch.mp4")
 
-    # Assemblage
-    with open("list.txt", "w") as f: f.write("file 'hook.mp4'\nfile 'core.mp4'\nfile 'punch.mp4'")
-    os.system("ffmpeg -f concat -safe 0 -i list.txt -c copy output.mp4")
+    # 3. Fusion Finale
+    with open("list.txt", "w") as f:
+        for m in ["hook.mp4", "core.mp4", "punch.mp4"]: f.write(f"file '{m}'\n")
     
-    # Encodage du résultat pour le renvoyer à l'app
+    # Création du vrai output.mp4
+    os.system("ffmpeg -f concat -safe 0 -i list.txt -c:v libx264 -pix_fmt yuv420p output.mp4")
+
+    # 4. Envoi du résultat pour l'application
     with open("output.mp4", "rb") as f:
         res_b64 = base64.b64encode(f.read()).decode()
     
-    # On stocke le résultat dans un fichier JSON que l'App pourra lire
     with open("result.json", "w") as f:
         json.dump({"video": res_b64}, f)
+    
+    print("TERMINÉ : output.mp4 et result.json créés.")
 
 if __name__ == "__main__":
     start()
