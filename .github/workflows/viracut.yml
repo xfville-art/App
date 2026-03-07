@@ -11,27 +11,24 @@ jobs:
   render:
     runs-on: ubuntu-latest
     steps:
-      - name: 1. Checkout Code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 2. Setup Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: 3. Install FFmpeg & Fonts
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-dejavu-core
+      - name: Install Tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
 
-      - name: 4. Build Video (Utilise le Secret)
+      - name: Build
         env:
-          # Ici, GitHub "invente" le token en allant le chercher dans tes Secrets
-          GH_TOKEN: ${{ secrets.VIRACUT_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Utilise le token auto de GitHub
         run: python render.py
 
-      - name: 5. Sauvegarde de la Vidéo
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: video-finale-ia
+          name: video-finale
           path: output.mp4
