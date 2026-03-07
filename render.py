@@ -18,36 +18,35 @@ def main():
     
     for i, v in enumerate(videos):
         input_name = f"in_{i}.mp4"
-        output_name = f"out_{i}.mp4"
+        output_name = f"out_{i}.ts" # .ts est plus stable pour la fusion
         with open(input_name, "wb") as vf:
             vf.write(base64.b64decode(v['data']))
 
         text = v.get('text', '').replace("'", "\\'").upper()
         
-        # --- EFFET PUNCHY FILTERS ---
-        # 1. Zoom constant (Ken Burns rapide)
-        # 2. Flash blanc au début (0.1s)
-        # 3. Correction couleur vibrante
+        # --- FILTRES PUNCHY (Version Stable) ---
+        # On remplace zoompan par un scale/crop dynamique plus simple
+        # On ajoute un flash blanc de 0.1s au début de chaque clip
         video_filter = (
-            f"scale={res_w}:{res_h}:force_original_aspect_ratio=increase,crop={res_w}:{res_h},"
-            f"zoompan=z='min(zoom+0.0015,1.5)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={res_w}x{res_h},"
-            f"eq=saturation=1.2:contrast=1.1," # Couleurs plus vives
-            f"fade=t=in:st=0:d=0.1:color=white" # Flash blanc rapide au lieu de transition longue
+            f"scale={res_w*2}:-1,crop={res_w}:{res_h},setsar=1," # Recadrage propre
+            f"drawbox=y=0:color=white:width=iw:height=ih:t=fill:enable='between(t,0,0.1)'," # Flash blanc
+            f"eq=saturation=1.3:contrast=1.1" # Boost couleurs
         )
         
         if text:
-            # Texte "TikTok Style" : Jaune ou Blanc, centré, avec bordure noire épaisse
+            # Style TikTok : Texte Jaune, Bordure Noire, au milieu
             video_filter += (
-                f",drawtext=text='{text}':fontcolor=yellow:fontsize=60:"
+                f",drawtext=text='{text}':fontcolor=yellow:fontsize=65:"
                 f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
-                f"x=(w-text_w)/2:y=(h-text_h)/2:borderw=4:bordercolor=black"
+                f"x=(w-text_w)/2:y=(h-text_h)/2:borderw=5:bordercolor=black"
             )
 
         cmd = [
             'ffmpeg', '-y', '-i', input_name,
             '-vf', video_filter,
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18', # Qualité haute, encodage rapide
-            '-c:a', 'aac', '-af', 'volume=1.5', # Son boosté de 50%
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20',
+            '-c:a', 'aac', '-ar', '44100', '-ac', '2', '-af', 'volume=1.5',
+            '-t', '5', # Limite à 5s par clip pour éviter les fichiers géants
             output_name
         ]
         subprocess.run(cmd, check=True)
@@ -57,14 +56,15 @@ def main():
     with open('list.txt', 'w') as f:
         for n in processed_clips: f.write(f"file '{n}'\n")
 
-    # On utilise concat avec un léger re-encodage pour garantir la fluidité
+    # On ré-encode légèrement la fin pour garantir la lecture sur iPhone/Android
     final_cmd = [
         'ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'list.txt',
-        '-c', 'copy', 'output.mp4'
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+        'output.mp4'
     ]
     
     subprocess.run(final_cmd, check=True)
-    print("Vidéo ULTRA-PUNCHY générée !")
+    print("Vidéo terminée avec succès !")
 
 if __name__ == "__main__":
     main()
