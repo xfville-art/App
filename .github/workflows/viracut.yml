@@ -29,4 +29,3 @@ jobs:
           name: video-finale
           path: output.mp4
           if-no-files-found: error
-          
