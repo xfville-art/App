@@ -14,6 +14,7 @@ def main():
             raw = json.load(f)
         
         # Correction du KeyError 'content'
+        # On supporte l'encapsulation GitHub ou le JSON direct
         encoded = raw.get('content', '')
         if not encoded:
             update_progress("Erreur: Données vides")
@@ -28,19 +29,19 @@ def main():
     segments = []
     for i, v in enumerate(videos):
         in_f, out_f = f"i_{i}.mp4", f"s_{i}.ts"
-        update_progress(f"Animation Clip {i+1}/{len(videos)}...")
+        update_progress(f"Rendu Animé Clip {i+1}/{len(videos)}...")
 
         with open(in_f, "wb") as f:
             f.write(base64.b64decode(v['data']))
 
         # FILTRE IA ANIMÉ : 
-        # fontsize : varie entre 50 et 80 (effet de battement)
-        # y : mouvement de haut en bas de 20 pixels
+        # fontsize : varie entre 55 et 85 (effet de respiration)
+        # y : mouvement de haut en bas de 25 pixels (rebond)
         txt = v.get('text','').replace("'", "\\'")
         filter_str = (
             f"scale=720:1280,"
-            f"drawtext=text='{txt}':fontcolor=yellow:fontsize='65+15*sin(2*pi*t/2)':"
-            f"x=(w-text_w)/2:y=(h-text_h)/2+25*cos(2*pi*t/1.5):"
+            f"drawtext=text='{txt}':fontcolor=yellow:fontsize='70+15*sin(2*pi*t/2.5)':"
+            f"x=(w-text_w)/2:y=(h-text_h)/2+20*cos(2*pi*t/2):"
             f"shadowcolor=black:shadowx=4:shadowy=4"
         )
 
@@ -52,7 +53,7 @@ def main():
         subprocess.run(cmd)
         segments.append(out_f)
 
-    # Création du fichier final pour éviter l'erreur d'artéfact
+    # Création du fichier final
     if segments:
         with open('concat.txt', 'w') as f:
             for s in segments: f.write(f"file '{s}'\n")
