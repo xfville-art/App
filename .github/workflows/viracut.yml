@@ -1,18 +1,30 @@
 name: VIRACUT
+
 on:
   workflow_dispatch:
+
 jobs:
   render:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
       - name: Install FFmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Build Video
         run: python render.py
+
       - name: Upload Result
         uses: actions/upload-artifact@v4
         with:
           name: video-finale
           path: output.mp4
-          if-no-files-found: error # Bloque l'action en rouge si le fichier est absent
+          if-no-files-found: error
+          
