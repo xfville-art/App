@@ -4,7 +4,6 @@ def main():
     if not os.path.exists('p.json'):
         print("ERREUR : p.json introuvable."); exit(1)
 
-    # 1. Chargement robuste des données
     with open('p.json', 'r') as f:
         content = json.load(f)
         raw_data = base64.b64decode(content['content']) if 'content' in content else json.dumps(content).encode()
@@ -12,40 +11,48 @@ def main():
 
     videos = data.get('videos', [])
     opt = data.get('options', {})
-    res_w, res_h = opt.get('resolution', '720x1280').split('x')
+    res_w, res_h = 720, 1280 # Format Portrait Standard
     fps = opt.get('fps', 30)
 
-    # 2. Traitement intelligent de chaque clip
     processed_clips = []
+    
+    # 1. Préparation de chaque clip avec effets
     for i, v in enumerate(videos):
-        input_name = f"raw_{i}.mp4"
-        output_name = f"proc_{i}.ts" # Utilisation de .ts pour une fusion parfaite
-        
+        input_name = f"in_{i}.mp4"
+        output_name = f"out_{i}.mp4"
         with open(input_name, "wb") as vf:
             vf.write(base64.b64decode(v['data']))
 
-        # --- LOGIQUE D'INTELLIGENCE ---
-        # Filtre : Mise à l'échelle + Zoom progressif (si activé)
-        # On simule un zoom de 1.0 à 1.1 sur la durée du clip
-        zoom_filter = f"scale=8000:-1,zoompan=z='min(zoom+0.001,1.1)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={res_w}x{res_h}"
-        
-        # Ajout du texte (Caption) avec style "IA" (fond noir semi-transparent)
+        # Extraction du texte et nettoyage
         text = v.get('text', '').replace("'", "\\'").upper()
-        text_filter = ""
+        
+        # Filtre FFmpeg Complexe : 
+        # - Mise à l'échelle (Cover) 
+        # - Texte avec ombre portée 
+        # - Fondu entrant/sortant (Fade)
+        video_filter = (
+            f"scale={res_w}:{res_h}:force_original_aspect_ratio=increase,crop={res_w}:{res_h},"
+            f"fade=t=in:st=0:d=0.5,fade=t=out:st=1.5:d=0.5" # Fondu de 0.5s
+        )
+        
         if text:
-            text_filter = (f",drawtext=text='{text}':fontcolor=white:fontsize=48:fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-                           f":x=(w-text_w)/2:y=(h-text_h)-150:box=1:boxcolor=black@0.5:boxborderw=10")
+            video_filter += (
+                f",drawtext=text='{text}':fontcolor=white:fontsize=50:"
+                f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
+                f"x=(w-text_w)/2:y=(h-text_h)/2:shadowcolor=black@0.6:shadowx=4:shadowy=4"
+            )
 
-        # Application des filtres et conversion en flux de transport (.ts) pour éviter les bugs de concaténation
-        cmd_clip = [
+        cmd = [
             'ffmpeg', '-y', '-i', input_name,
-            '-vf', f"{zoom_filter}{text_filter},format=yuv420p",
-            '-c:v', 'libx264', '-preset', 'veryfast', '-r', str(fps), output_name
+            '-vf', video_filter,
+            '-c:v', 'libx264', '-preset', 'fast', '-crf', '22',
+            '-c:a', 'aac', '-b:a', '128k', # On garde le SON
+            output_name
         ]
-        subprocess.run(cmd_clip, check=True)
+        subprocess.run(cmd, check=True)
         processed_clips.append(output_name)
 
-    # 3. Assemblage Final
+    # 2. Fusion finale de tous les clips
     with open('list.txt', 'w') as f:
         for n in processed_clips: f.write(f"file '{n}'\n")
 
@@ -54,9 +61,8 @@ def main():
         '-c', 'copy', 'output.mp4'
     ]
     
-    print("Assemblage final...")
     subprocess.run(final_cmd, check=True)
-    print("Vidéo générée avec succès !")
+    print("Vidéo Pro générée !")
 
 if __name__ == "__main__":
     main()
