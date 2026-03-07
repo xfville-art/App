@@ -5,73 +5,51 @@ def main():
         print("ERREUR : p.json introuvable."); exit(1)
 
     with open('p.json', 'r') as f:
-        content = json.load(f)
-        raw_data = base64.b64decode(content['content']) if 'content' in content else json.dumps(content).encode()
-        data = json.loads(raw_data)
+        try:
+            full_data = json.load(f)
+            # Si le JSON vient de l'API GitHub, les données sont dans 'content'
+            if isinstance(full_data, dict) and 'content' in full_data:
+                raw_json = base64.b64decode(full_data['content'])
+                data = json.loads(raw_json)
+            else:
+                # Sinon, on lit le JSON directement
+                data = full_data
+        except Exception as e:
+            print(f"Erreur de lecture JSON : {e}"); exit(1)
 
     videos = data.get('videos', [])
-    opt = data.get('options', {})
+    # Configuration des textes animés (Style Anthropic)
     res_w, res_h = 720, 1280
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     
     processed_clips = []
-    
-    # Chemin de la police standard sur Ubuntu GitHub Runner
-    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-
     for i, v in enumerate(videos):
-        input_name = f"in_{i}.mp4"
-        output_name = f"out_{i}.ts"
-        with open(input_name, "wb") as vf:
+        fname = f"c_{i}.mp4"
+        out_name = f"c_{i}.ts"
+        with open(fname, "wb") as vf:
             vf.write(base64.b64decode(v['data']))
 
-        # Récupérer la durée exacte
-        probe = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', input_name], capture_output=True, text=True)
-        try:
-            dur = float(probe.stdout.strip())
-        except:
-            dur = 2.0
+        # Calcul de la durée pour l'animation
+        dur_cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', fname]
+        dur = float(subprocess.check_output(dur_cmd).decode().strip() or 2.0)
 
-        text_str = v.get('text', '').strip().upper()
-        print(f"Traitement clip {i} - Texte: {text_str}")
-
-        # --- FILTRE VIDÉO ---
-        # On prépare la base : Scale + Crop + Flash blanc
-        video_filter = f"scale={res_w}:{res_h}:force_original_aspect_ratio=increase,crop={res_w}:{res_h},drawbox=y=0:color=white:width=iw:height=ih:t=fill:enable='between(t,0,0.07)'"
+        # Filtre Vidéo + Texte Animé Mot par Mot
+        v_filter = f"scale={res_w}:{res_h}:force_original_aspect_ratio=increase,crop={res_w}:{res_h},drawbox=y=0:color=white:width=iw:height=ih:t=fill:enable='between(t,0,0.07)'"
         
-        # AJOUT DES MOTS ANIMÉS
-        if text_str:
-            words = text_str.split()
-            word_dur = dur / len(words)
-            for idx, word in enumerate(words):
-                start = idx * word_dur
-                end = (idx + 1) * word_dur
-                
-                # Nettoyage du texte pour éviter les erreurs FFmpeg
-                clean_word = word.replace(":", "\\:").replace("'", "").replace(",", "")
-                
-                # Ajout du drawtext pour chaque mot
-                video_filter += (
-                    f",drawtext=fontfile='{font_path}':text='{clean_word}':"
-                    f"fontcolor=white:fontsize=90:x=(w-text_w)/2:y=(h-text_h)/2:"
-                    f"shadowcolor=black@0.5:shadowx=4:shadowy=4:enable='between(t,{start},{end})'"
-                )
+        text = v.get('text', '').upper()
+        if text:
+            words = text.split()
+            w_dur = dur / len(words)
+            for idx, w in enumerate(words):
+                v_filter += f",drawtext=fontfile='{font_path}':text='{w}':fontcolor=white:fontsize=90:x=(w-text_w)/2:y=(h-text_h)/2:shadowcolor=black@0.5:shadowx=4:shadowy=4:enable='between(t,{idx*w_dur},{(idx+1)*w_dur})'"
 
-        cmd = [
-            'ffmpeg', '-y', '-i', input_name,
-            '-vf', video_filter,
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18',
-            '-c:a', 'aac', '-ac', '2', '-af', 'volume=1.5',
-            output_name
-        ]
-        subprocess.run(cmd, check=True)
-        processed_clips.append(output_name)
+        subprocess.run(['ffmpeg', '-y', '-i', fname, '-vf', v_filter, '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', out_name], check=True)
+        processed_clips.append(out_name)
 
-    # Fusion finale
+    # Concaténation finale
     with open('list.txt', 'w') as f:
         for n in processed_clips: f.write(f"file '{n}'\n")
-
-    subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', 'output.mp4'], check=True)
-    print("TERMINÉ avec succès.")
+    subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c', 'copy', '-pix_fmt', 'yuv420p', 'output.mp4'], check=True)
 
 if __name__ == "__main__":
     main()
