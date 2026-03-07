@@ -1,69 +1,58 @@
-import json
-import base64
-import os
-import subprocess
+import json, base64, os, subprocess
 
 def main():
-    # 1. Vérification du fichier de données
     if not os.path.exists('p.json'):
-        print("Erreur : p.json introuvable. L'App n'a pas envoyé les données.")
-        exit(1)
+        print("ERREUR : p.json introuvable."); exit(1)
 
-    # 2. Lecture et décodage
-    try:
-        with open('p.json', 'r') as f:
-            # L'API GitHub renvoie le contenu dans un dictionnaire sous la clé 'content'
-            raw_github_data = json.load(f)
-            # Décodage du Base64 global (envoyé par ton App-2.html)
-            decoded_json = base64.b64decode(raw_github_data['content'])
-            data = json.loads(decoded_json)
-    except Exception as e:
-        print(f"Erreur de décodage : {e}")
-        exit(1)
+    # Lecture du fichier p.json
+    with open('p.json', 'r') as f:
+        content = json.load(f)
+        # Si GitHub Actions lit le fichier, il est soit brut, soit dans ['content']
+        if isinstance(content, dict) and 'content' in content:
+            raw_data = base64.b64decode(content['content'])
+        else:
+            raw_data = json.dumps(content).encode()
+        
+        data = json.loads(raw_data)
 
-    videos = data['videos']
-    opt = data['options']
+    videos = data.get('videos', [])
+    opt = data.get('options', {})
     
-    print(f"Traitement de {len(videos)} clips...")
-
-    # 3. Extraction des fichiers vidéos temporaires
+    # 1. Extraire les clips
     input_files = []
     for i, v in enumerate(videos):
-        fname = f"clip_{i}.mp4"
-        with open(fname, "wb") as f:
-            f.write(base64.b64decode(v['data']))
+        fname = f"c{i}.mp4"
+        with open(fname, "wb") as vf:
+            vf.write(base64.b64decode(v['data']))
         input_files.append(fname)
 
-    # 4. Préparation de la fusion FFmpeg
-    # On crée une liste de fichiers pour FFmpeg
+    # 2. Créer la liste pour FFmpeg
     with open('list.txt', 'w') as f:
-        for name in input_files:
-            f.write(f"file '{name}'\n")
+        for n in input_files: f.write(f"file '{n}'\n")
 
-    # Formatage de la résolution (ex: 720x1280 -> 720:1280)
-    resolution = opt['resolution'].replace('x', ':').replace('×', ':')
+    # 3. Préparer les filtres (Résolution + Textes)
+    res = opt.get('resolution', '720x1280').replace('x', ':')
     
-    # Commande FFmpeg
+    # Construction du filtre de texte si présent
+    video_filter = f"scale={res},fps={opt.get('fps', 30)}"
+    
+    # Ajout du texte au milieu de la vidéo (Captions)
+    for v in videos:
+        text = v.get('text', '').replace("'", "")
+        if text:
+            video_filter += f",drawtext=text='{text}':fontcolor=white:fontsize=40:x=(w-text_w)/2:y=(h-text_h)/2:enable='between(t,0,2)'"
+
+    # 4. Lancer FFmpeg
     cmd = [
-        'ffmpeg', '-y',
-        '-f', 'concat', '-safe', '0', '-i', 'list.txt',
-        '-vf', f"scale={resolution},fps={opt['fps']}",
-        '-c:v', 'libx264',
-        '-crf', str(opt['crf']),
-        '-pix_fmt', 'yuv420p',
-        'output.mp4'
+        'ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'list.txt',
+        '-vf', video_filter,
+        '-c:v', 'libx264', '-crf', str(opt.get('crf', 23)),
+        '-pix_fmt', 'yuv420p', 'output.mp4'
     ]
 
-    # 5. Exécution
-    print("Démarrage de FFmpeg...")
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    
-    if result.returncode != 0:
-        print("Erreur FFmpeg :", result.stderr)
-        exit(1)
-    
-    print("Succès ! Fichier output.mp4 prêt.")
+    print("Rendu en cours...")
+    subprocess.run(cmd, check=True)
+    print("Terminé : output.mp4")
 
 if __name__ == "__main__":
     main()
-    
