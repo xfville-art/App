@@ -1,13 +1,4 @@
-import json, base64, os, subprocess, re
-
-def split_text_into_timed_parts(text, duration):
-    """Découpe le texte en segments pour l'animation"""
-    words = text.split()
-    if not words: return []
-    n = max(1, len(words) // 3) # Groupes de 3 mots
-    chunks = [" ".join(words[i:i+n]) for i in range(0, len(words), n)]
-    chunk_dur = duration / len(chunks)
-    return [(chunk, i*chunk_dur, (i+1)*chunk_dur) for i, chunk in enumerate(chunks)]
+import json, base64, os, subprocess
 
 def main():
     if not os.path.exists('p.json'):
@@ -21,8 +12,7 @@ def main():
     videos = data.get('videos', [])
     opt = data.get('options', {})
     res_w, res_h = 720, 1280
-    fps = opt.get('fps', 30)
-
+    
     processed_clips = []
     
     for i, v in enumerate(videos):
@@ -31,35 +21,39 @@ def main():
         with open(input_name, "wb") as vf:
             vf.write(base64.b64decode(v['data']))
 
-        # Analyse de la durée réelle du clip via FFmpeg
+        # Analyse de la durée pour le timing des mots
         probe = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', input_name], capture_output=True, text=True)
-        duration = float(probe.stdout.strip() or 2.0)
+        dur = float(probe.stdout.strip() or 2.0)
 
-        # --- FILTRES IA & ANIMATION ---
-        # 1. Zoom Panoramique (plus stable)
-        video_filter = f"scale=1280:-1,crop={res_w}:{res_h},setsar=1"
+        text_str = v.get('text', '').strip().upper()
         
-        # 2. Animation des Textes (Captions Dynamiques)
-        text_str = v.get('text', '').replace("'", "\\'").upper()
+        # --- FILTRE VIDÉO IA STYLE ---
+        # 1. Mise au format et léger zoom de fond
+        video_filter = f"scale={res_w*2}:-1,crop={res_w}:{res_h},setsar=1"
+        
+        # 2. Logique d'animation des mots (IA Style)
         if text_str:
-            parts = split_text_into_timed_parts(text_str, duration)
-            for chunk, start, end in parts:
-                # Effet de texte qui "pop" (jaune avec bordure noire)
+            words = text_str.split()
+            word_dur = dur / len(words)
+            for idx, word in enumerate(words):
+                start = idx * word_dur
+                end = (idx + 1) * word_dur
+                # Effet : Texte blanc pur, ombre portée douce, animation "Pop"
                 video_filter += (
-                    f",drawtext=text='{chunk}':fontcolor=yellow:fontsize=70:"
+                    f",drawtext=text='{word}':fontcolor=white:fontsize=80:"
                     f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
-                    f"x=(w-text_w)/2:y=(h-text_h)/2+100:borderw=5:bordercolor=black:"
+                    f"x=(w-text_w)/2:y=(h-text_h)/2:shadowcolor=black@0.5:shadowx=5:shadowy=5:"
                     f"enable='between(t,{start},{end})'"
                 )
 
-        # 3. Flash de transition
-        video_filter += f",drawbox=y=0:color=white:width=iw:height=ih:t=fill:enable='between(t,0,0.1)'"
+        # 3. Effet de transition Punchy (Flash rapide)
+        video_filter += f",drawbox=y=0:color=white:width=iw:height=ih:t=fill:enable='between(t,0,0.08)'"
 
         cmd = [
             'ffmpeg', '-y', '-i', input_name,
             '-vf', video_filter,
             '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18',
-            '-c:a', 'aac', '-ar', '44100', '-af', 'volume=1.8',
+            '-c:a', 'aac', '-ac', '2', '-af', 'volume=1.5',
             output_name
         ]
         subprocess.run(cmd, check=True)
@@ -69,8 +63,8 @@ def main():
     with open('list.txt', 'w') as f:
         for n in processed_clips: f.write(f"file '{n}'\n")
 
-    subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c', 'copy', 'output.mp4'], check=True)
-    print("Vidéo IA Capcut-Style terminée !")
+    subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', 'output.mp4'], check=True)
+    print("Vidéo terminée avec style IA Anthropic.")
 
 if __name__ == "__main__":
     main()
