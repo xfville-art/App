@@ -7,26 +7,34 @@ jobs:
   render:
     runs-on: ubuntu-latest
     steps:
-      - name: Récupération du code
+      - name: 1. Récupération du dépôt
         uses: actions/checkout@v4
 
-      - name: Installation de Python
+      - name: 2. Installation de Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Installation de FFmpeg
+      - name: 3. Installation de FFmpeg et des Polices
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg fonts-dejavu-core
 
-      - name: Lancement du rendu
+      - name: 4. Vérification des données (Debug)
+        run: |
+          if [ -f p.json ]; then
+            echo "Fichier p.json détecté."
+          else
+            echo "ERREUR: p.json introuvable à la racine."
+            exit 1
+          fi
+
+      - name: 5. Exécution du rendu intelligent
         run: python render.py
 
-      - name: Sauvegarde de la vidéo
+      - name: 6. Sauvegarde du résultat
         uses: actions/upload-artifact@v4
         with:
           name: video-finale
           path: output.mp4
           if-no-files-found: error
-          
