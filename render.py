@@ -4,24 +4,30 @@ import os
 import subprocess
 
 def main():
-    # 1. Vérifier si le fichier p.json existe
+    # 1. Vérifier si le fichier p.json existe à la racine
     if not os.path.exists('p.json'):
-        print("Erreur : p.json introuvable. L'interface HTML n'a pas envoyé les données.")
+        print("Erreur : p.json introuvable.")
         exit(1)
 
-    # 2. Charger les données (p.json contient du base64 selon ton code App-2.html)
+    # 2. Charger les données directement
+    # Note: Ton App HTML fait un btoa() du JSON, donc on décode une fois
     with open('p.json', 'r') as f:
-        github_data = json.load(f)
-        # Décodage du contenu envoyé par l'API GitHub
-        raw_data = base64.b64decode(github_data['content'])
-        data = json.loads(raw_data)
+        try:
+            # On lit le fichier qui contient le b64 envoyé par l'App
+            file_data = json.load(f)
+            # Selon ton code JS: content: btoa(JSON.stringify({ videos, options }))
+            raw_data = base64.b64decode(file_data['content'])
+            data = json.loads(raw_data)
+        except Exception as e:
+            print(f"Erreur de lecture JSON/Base64 : {e}")
+            exit(1)
 
     videos = data['videos']
     opt = data['options']
     
     print(f"Traitement de {len(videos)} clips...")
 
-    # 3. Extraire et sauvegarder les clips vidéo temporaires
+    # 3. Extraire les vidéos
     input_files = []
     for i, v in enumerate(videos):
         filename = f"clip_{i}.mp4"
@@ -29,36 +35,25 @@ def main():
             f.write(base64.b64decode(v['data']))
         input_files.append(filename)
 
-    # 4. Préparation de la commande FFmpeg (Fusion simple)
-    # Note : On utilise la résolution et les FPS choisis dans ton interface
-    res = opt['resolution'].replace('x', ':') # Conversion 720x1280 en format FFmpeg
-    
-    # Création du fichier de concaténation
+    # 4. Concaténation FFmpeg
     with open('inputs.txt', 'w') as f:
         for fname in input_files:
             f.write(f"file '{fname}'\n")
 
+    res = opt['resolution'].replace('x', ':')
+    
     cmd = [
         'ffmpeg', '-y',
-        '-f', 'concat',
-        '-safe', '0',
-        '-i', 'inputs.txt',
-        '-vf', f"scale={opt['resolution'].replace('x', ':')},fps={opt['fps']}",
-        '-c:v', 'libx264',
-        '-crf', str(opt['crf']),
+        '-f', 'concat', '-safe', '0', '-i', 'inputs.txt',
+        '-vf', f"scale={res},fps={opt['fps']}",
+        '-c:v', 'libx264', '-crf', str(opt['crf']),
         '-pix_fmt', 'yuv420p',
         'output.mp4'
     ]
 
-    # 5. Exécution du rendu
-    print("Démarrage du rendu FFmpeg...")
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    
-    if result.returncode != 0:
-        print("Erreur FFmpeg :", result.stderr)
-        exit(1)
-    
-    print("Rendu terminé avec succès : output.mp4 généré.")
+    print("Démarrage du rendu...")
+    subprocess.run(cmd, check=True)
+    print("Succès : output.mp4 créé.")
 
 if __name__ == "__main__":
     main()
