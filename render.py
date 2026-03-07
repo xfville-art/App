@@ -1,43 +1,47 @@
-import json, base64, os, subprocess, time
+import json, base64, os, subprocess
 
 def update_progress(text):
     with open("progress.txt", "w") as f:
         f.write(text)
 
 def main():
-    if not os.path.exists('p.json'): return
+    if not os.path.exists('p.json'): 
+        print("Erreur: p.json introuvable"); return
+        
     with open('p.json', 'r') as f:
         raw = json.load(f)
-        data = json.loads(base64.b64decode(raw['content']))
+        # Correction du KeyError : On vérifie si 'content' existe
+        content_str = raw.get('content', '')
+        if not content_str:
+            print("Erreur: Clé 'content' vide"); return
+        data = json.loads(base64.b64decode(content_str))
 
     videos = data.get('videos', [])
     processed = []
     
     for i, v in enumerate(videos):
         in_f, out_f = f"i_{i}.mp4", f"o_{i}.ts"
-        with open(in_f, "wb") as f: f.write(base64.b64decode(v['data']))
+        # On décode la vidéo envoyée par l'App-2.html
+        with open(in_f, "wb") as f: 
+            f.write(base64.b64decode(v['data']))
         
-        # Commande avec monitoring de progression
+        update_progress(f"Rendu Clip {i+1}/{len(videos)}")
+        
+        # Encodage rapide (optimisé selon tes logs)
         cmd = [
             'ffmpeg', '-y', '-i', in_f,
-            '-vf', f"scale=720:1280,drawtext=text='{v.get('text','')}':fontcolor={v.get('color','yellow')}:fontsize=80:x=(w-text_w)/2:y=(h-text_h)/2",
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-progress', 'pipe:1', out_f
+            '-vf', f"scale=720:1280,drawtext=text='{v.get('text','')}':fontcolor=yellow:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2",
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', out_f
         ]
-        
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
-        
-        for line in process.stdout:
-            if "out_time_ms" in line:
-                update_progress(f"Clip {i+1}/{len(videos)} - {line.strip()}")
-
-        process.wait()
+        subprocess.run(cmd)
         processed.append(out_f)
 
     # Fusion finale
-    with open('list.txt', 'w') as f:
-        for n in processed: f.write(f"file '{n}'\n")
-    subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c:v', 'copy', 'output.mp4'])
-    update_progress("COMPLETED")
+    if processed:
+        with open('list.txt', 'w') as f:
+            for n in processed: f.write(f"file '{n}'\n")
+        subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c:v', 'copy', 'output.mp4'])
+        update_progress("COMPLETED")
 
 if __name__ == "__main__":
     main()
