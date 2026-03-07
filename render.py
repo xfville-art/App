@@ -13,7 +13,7 @@ def main():
         with open('p.json', 'r') as f:
             raw = json.load(f)
         
-        # Correction du KeyError 'content'
+        # Correction sécurisée pour éviter le KeyError 'content'
         encoded = raw.get('content', '')
         if not encoded:
             update_progress("Erreur: Payload vide")
@@ -33,8 +33,7 @@ def main():
         with open(in_file, "wb") as f:
             f.write(base64.b64decode(v['data']))
 
-        # FILTRE ANIMÉ : Taille variable (battement) + Rebond vertical (cosinus)
-        # fontsize='60+20*sin(2*pi*t/3)' fait varier la taille entre 40 et 80
+        # FILTRE ANIMÉ : Taille variable (sin) + Rebond vertical (cos)
         text_filter = (
             f"scale=720:1280,"
             f"drawtext=text='{v.get('text','')}':fontcolor=yellow:fontsize='60+20*sin(2*pi*t/3)':"
@@ -42,7 +41,7 @@ def main():
             f"shadowcolor=black:shadowx=5:shadowy=5"
         )
 
-        # Encodage rapide optimisé
+        # Encodage optimisé (Speed 4.7x constaté dans vos logs)
         cmd = [
             'ffmpeg', '-y', '-i', in_file,
             '-vf', text_filter,
@@ -51,14 +50,13 @@ def main():
         subprocess.run(cmd)
         segments.append(out_file)
 
-    # Fusion finale obligatoire pour générer output.mp4
+    # Fusion finale pour créer output.mp4
     if segments:
         with open('concat.txt', 'w') as f:
             for s in segments: f.write(f"file '{s}'\n")
         
         subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'concat.txt', '-c:v', 'copy', 'output.mp4'])
         update_progress("COMPLETED")
-        print("Vidéo finale créée.")
 
 if __name__ == "__main__":
     main()
