@@ -11,24 +11,25 @@ jobs:
   render:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: 1. Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install Python
+      - name: 2. Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Install FFmpeg & Fonts
+      - name: 3. Install FFmpeg, FFprobe & Fonts
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-dejavu-core
 
-      - name: Run AI Render
+      - name: 4. Exécution du Rendu IA Anthropic
         run: python render.py
 
-      - name: Upload Video
+      - name: 5. Upload de la Vidéo
         uses: actions/upload-artifact@v4
         with:
           name: video-ia-anthropic
           path: output.mp4
+          if-no-files-found: error
