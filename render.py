@@ -4,55 +4,59 @@ def main():
     if not os.path.exists('p.json'):
         print("ERREUR : p.json introuvable."); exit(1)
 
-    # Lecture du fichier p.json
+    # 1. Chargement robuste des données
     with open('p.json', 'r') as f:
         content = json.load(f)
-        # Si GitHub Actions lit le fichier, il est soit brut, soit dans ['content']
-        if isinstance(content, dict) and 'content' in content:
-            raw_data = base64.b64decode(content['content'])
-        else:
-            raw_data = json.dumps(content).encode()
-        
+        raw_data = base64.b64decode(content['content']) if 'content' in content else json.dumps(content).encode()
         data = json.loads(raw_data)
 
     videos = data.get('videos', [])
     opt = data.get('options', {})
-    
-    # 1. Extraire les clips
-    input_files = []
+    res_w, res_h = opt.get('resolution', '720x1280').split('x')
+    fps = opt.get('fps', 30)
+
+    # 2. Traitement intelligent de chaque clip
+    processed_clips = []
     for i, v in enumerate(videos):
-        fname = f"c{i}.mp4"
-        with open(fname, "wb") as vf:
+        input_name = f"raw_{i}.mp4"
+        output_name = f"proc_{i}.ts" # Utilisation de .ts pour une fusion parfaite
+        
+        with open(input_name, "wb") as vf:
             vf.write(base64.b64decode(v['data']))
-        input_files.append(fname)
 
-    # 2. Créer la liste pour FFmpeg
-    with open('list.txt', 'w') as f:
-        for n in input_files: f.write(f"file '{n}'\n")
-
-    # 3. Préparer les filtres (Résolution + Textes)
-    res = opt.get('resolution', '720x1280').replace('x', ':')
-    
-    # Construction du filtre de texte si présent
-    video_filter = f"scale={res},fps={opt.get('fps', 30)}"
-    
-    # Ajout du texte au milieu de la vidéo (Captions)
-    for v in videos:
-        text = v.get('text', '').replace("'", "")
+        # --- LOGIQUE D'INTELLIGENCE ---
+        # Filtre : Mise à l'échelle + Zoom progressif (si activé)
+        # On simule un zoom de 1.0 à 1.1 sur la durée du clip
+        zoom_filter = f"scale=8000:-1,zoompan=z='min(zoom+0.001,1.1)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={res_w}x{res_h}"
+        
+        # Ajout du texte (Caption) avec style "IA" (fond noir semi-transparent)
+        text = v.get('text', '').replace("'", "\\'").upper()
+        text_filter = ""
         if text:
-            video_filter += f",drawtext=text='{text}':fontcolor=white:fontsize=40:x=(w-text_w)/2:y=(h-text_h)/2:enable='between(t,0,2)'"
+            text_filter = (f",drawtext=text='{text}':fontcolor=white:fontsize=48:fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+                           f":x=(w-text_w)/2:y=(h-text_h)-150:box=1:boxcolor=black@0.5:boxborderw=10")
 
-    # 4. Lancer FFmpeg
-    cmd = [
+        # Application des filtres et conversion en flux de transport (.ts) pour éviter les bugs de concaténation
+        cmd_clip = [
+            'ffmpeg', '-y', '-i', input_name,
+            '-vf', f"{zoom_filter}{text_filter},format=yuv420p",
+            '-c:v', 'libx264', '-preset', 'veryfast', '-r', str(fps), output_name
+        ]
+        subprocess.run(cmd_clip, check=True)
+        processed_clips.append(output_name)
+
+    # 3. Assemblage Final
+    with open('list.txt', 'w') as f:
+        for n in processed_clips: f.write(f"file '{n}'\n")
+
+    final_cmd = [
         'ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'list.txt',
-        '-vf', video_filter,
-        '-c:v', 'libx264', '-crf', str(opt.get('crf', 23)),
-        '-pix_fmt', 'yuv420p', 'output.mp4'
+        '-c', 'copy', 'output.mp4'
     ]
-
-    print("Rendu en cours...")
-    subprocess.run(cmd, check=True)
-    print("Terminé : output.mp4")
+    
+    print("Assemblage final...")
+    subprocess.run(final_cmd, check=True)
+    print("Vidéo générée avec succès !")
 
 if __name__ == "__main__":
     main()
