@@ -15,63 +15,63 @@ def main():
     
     processed_clips = []
     
+    # Chemin de la police standard sur Ubuntu GitHub Runner
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+
     for i, v in enumerate(videos):
         input_name = f"in_{i}.mp4"
         output_name = f"out_{i}.ts"
         with open(input_name, "wb") as vf:
             vf.write(base64.b64decode(v['data']))
 
-        # Analyse précise de la durée du clip
+        # Récupérer la durée exacte
         probe = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', input_name], capture_output=True, text=True)
         try:
             dur = float(probe.stdout.strip())
         except:
-            dur = 2.0 # Sécurité
+            dur = 2.0
 
         text_str = v.get('text', '').strip().upper()
+        print(f"Traitement clip {i} - Texte: {text_str}")
+
+        # --- FILTRE VIDÉO ---
+        # On prépare la base : Scale + Crop + Flash blanc
+        video_filter = f"scale={res_w}:{res_h}:force_original_aspect_ratio=increase,crop={res_w}:{res_h},drawbox=y=0:color=white:width=iw:height=ih:t=fill:enable='between(t,0,0.07)'"
         
-        # --- FILTRES VIDÉO STYLE IA ---
-        # On force le format vertical 9:16 et on améliore le piqué de l'image
-        video_filter = f"scale={res_w}:{res_h}:force_original_aspect_ratio=increase,crop={res_w}:{res_h},unsharp=3:3:1.5"
-        
-        # LOGIQUE D'ANIMATION MOT PAR MOT
+        # AJOUT DES MOTS ANIMÉS
         if text_str:
             words = text_str.split()
-            if len(words) > 0:
-                word_dur = dur / len(words)
-                for idx, word in enumerate(words):
-                    start = idx * word_dur
-                    end = (idx + 1) * word_dur
-                    
-                    # Style Anthropic : Blanc pur, sans boîte, ombre portée douce (Glow effect)
-                    # Le texte "pop" au centre avec une taille de 80
-                    video_filter += (
-                        f",drawtext=text='{word}':fontcolor=white:fontsize=85:"
-                        f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
-                        f"x=(w-text_w)/2:y=(h-text_h)/2:shadowcolor=black@0.4:shadowx=4:shadowy=4:"
-                        f"enable='between(t,{start},{end})'"
-                    )
-
-        # Transition Punchy : Flash blanc très court (60ms)
-        video_filter += f",drawbox=y=0:color=white:width=iw:height=ih:t=fill:enable='between(t,0,0.06)'"
+            word_dur = dur / len(words)
+            for idx, word in enumerate(words):
+                start = idx * word_dur
+                end = (idx + 1) * word_dur
+                
+                # Nettoyage du texte pour éviter les erreurs FFmpeg
+                clean_word = word.replace(":", "\\:").replace("'", "").replace(",", "")
+                
+                # Ajout du drawtext pour chaque mot
+                video_filter += (
+                    f",drawtext=fontfile='{font_path}':text='{clean_word}':"
+                    f"fontcolor=white:fontsize=90:x=(w-text_w)/2:y=(h-text_h)/2:"
+                    f"shadowcolor=black@0.5:shadowx=4:shadowy=4:enable='between(t,{start},{end})'"
+                )
 
         cmd = [
             'ffmpeg', '-y', '-i', input_name,
             '-vf', video_filter,
             '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18',
-            '-c:a', 'aac', '-ac', '2', '-af', 'volume=1.8',
+            '-c:a', 'aac', '-ac', '2', '-af', 'volume=1.5',
             output_name
         ]
         subprocess.run(cmd, check=True)
         processed_clips.append(output_name)
 
-    # Fusion finale propre
+    # Fusion finale
     with open('list.txt', 'w') as f:
         for n in processed_clips: f.write(f"file '{n}'\n")
 
-    # Encodage final compatible iPhone/Android (yuv420p)
-    subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', 'output.mp4'], check=True)
-    print("Vidéo terminée avec Captions IA Dynamiques.")
+    subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', 'output.mp4'], check=True)
+    print("TERMINÉ avec succès.")
 
 if __name__ == "__main__":
     main()
