@@ -5,43 +5,58 @@ def update_progress(text):
         f.write(text)
 
 def main():
-    if not os.path.exists('p.json'): 
-        print("Erreur: p.json introuvable"); return
-        
-    with open('p.json', 'r') as f:
-        raw = json.load(f)
-        # Correction du KeyError : On vérifie si 'content' existe
-        content_str = raw.get('content', '')
-        if not content_str:
-            print("Erreur: Clé 'content' vide"); return
-        data = json.loads(base64.b64decode(content_str))
+    # 1. Vérification du fichier de données
+    if not os.path.exists('p.json'):
+        update_progress("Erreur: p.json manquant")
+        return
 
-    videos = data.get('videos', [])
-    processed = []
+    try:
+        with open('p.json', 'r') as f:
+            raw_data = json.load(f)
+        
+        # Correction KeyError: on récupère 'content' de manière sécurisée
+        encoded_content = raw_data.get('content', '')
+        if not encoded_content:
+            update_progress("Erreur: JSON vide")
+            return
+            
+        data = json.loads(base64.b64decode(encoded_content).decode('utf-8'))
+        videos = data.get('videos', [])
+    except Exception as e:
+        update_progress(f"Erreur décodage: {str(e)}")
+        return
+
+    processed_files = []
     
+    # 2. Traitement des clips
     for i, v in enumerate(videos):
-        in_f, out_f = f"i_{i}.mp4", f"o_{i}.ts"
-        # On décode la vidéo envoyée par l'App-2.html
-        with open(in_f, "wb") as f: 
+        in_file = f"input_{i}.mp4"
+        out_file = f"segment_{i}.ts"
+        
+        update_progress(f"Traitement clip {i+1}/{len(videos)}...")
+        
+        # Sauvegarde du média
+        with open(in_file, "wb") as f:
             f.write(base64.b64decode(v['data']))
         
-        update_progress(f"Rendu Clip {i+1}/{len(videos)}")
-        
-        # Encodage rapide (optimisé selon tes logs)
+        # Encodage (Paramètres optimisés selon tes logs)
         cmd = [
-            'ffmpeg', '-y', '-i', in_f,
-            '-vf', f"scale=720:1280,drawtext=text='{v.get('text','')}':fontcolor=yellow:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2",
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', out_f
+            'ffmpeg', '-y', '-i', in_file,
+            '-vf', f"scale=720:1280,drawtext=text='{v.get('text','')}':fontcolor=yellow:fontsize=50:x=(w-text_w)/2:y=(h-text_h)/2",
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', '-b:a', '128k', out_file
         ]
         subprocess.run(cmd)
-        processed.append(out_f)
+        processed_files.append(out_file)
 
-    # Fusion finale
-    if processed:
-        with open('list.txt', 'w') as f:
-            for n in processed: f.write(f"file '{n}'\n")
-        subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c:v', 'copy', 'output.mp4'])
+    # 3. Fusion finale (Génère output.mp4 attendu par GitHub)
+    if processed_files:
+        with open('concat_list.txt', 'w') as f:
+            for f_name in processed_files:
+                f.write(f"file '{f_name}'\n")
+        
+        subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'concat_list.txt', '-c:v', 'copy', 'output.mp4'])
         update_progress("COMPLETED")
+        print("Rendu terminé: output.mp4 généré.")
 
 if __name__ == "__main__":
     main()
