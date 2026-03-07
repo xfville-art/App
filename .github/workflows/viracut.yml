@@ -3,11 +3,16 @@ name: VIRACUT
 on:
   workflow_dispatch:
 
+# Permissions nécessaires pour que l'App HTML puisse modifier les fichiers
+permissions:
+  contents: write
+  actions: write
+
 jobs:
   render:
     runs-on: ubuntu-latest
     steps:
-      - name: 1. Récupération du dépôt
+      - name: 1. Récupération du code
         uses: actions/checkout@v4
 
       - name: 2. Installation de Python
@@ -15,24 +20,24 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: 3. Installation de FFmpeg et des Polices
+      - name: 3. Installation de FFmpeg et des Polices (Vital pour le texte)
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-dejavu-core
 
-      - name: 4. Vérification des données (Debug)
+      - name: 4. Vérification du fichier p.json
         run: |
           if [ -f p.json ]; then
-            echo "Fichier p.json détecté."
+            echo "Fichier p.json détecté, lancement du rendu..."
           else
-            echo "ERREUR: p.json introuvable à la racine."
+            echo "ERREUR: p.json est introuvable. Vérifiez l'envoi depuis l'App HTML."
             exit 1
           fi
 
-      - name: 5. Exécution du rendu intelligent
+      - name: 5. Exécution du Rendu IA (Captions & Punchy)
         run: python render.py
 
-      - name: 6. Sauvegarde du résultat
+      - name: 6. Publication de la vidéo finale
         uses: actions/upload-artifact@v4
         with:
           name: video-finale
