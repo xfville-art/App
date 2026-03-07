@@ -13,7 +13,7 @@ def main():
         with open('p.json', 'r') as f:
             raw = json.load(f)
         
-        # Correction KeyError 'content'
+        # Correction sécurisée pour éviter le KeyError 'content'
         encoded = raw.get('content', '')
         if not encoded:
             update_progress("Erreur: Payload vide")
@@ -34,7 +34,6 @@ def main():
             f.write(base64.b64decode(v['data']))
 
         # FILTRE ANIMÉ : Taille variable (sin) + Rebond vertical (cos)
-        # v['text'] est récupéré de l'interface
         text_filter = (
             f"scale=720:1280,"
             f"drawtext=text='{v.get('text','')}':fontcolor=yellow:fontsize='60+20*sin(2*pi*t/3)':"
@@ -42,6 +41,7 @@ def main():
             f"shadowcolor=black:shadowx=5:shadowy=5"
         )
 
+        # Encodage ultra-rapide calqué sur vos logs (4.7x speed)
         cmd = [
             'ffmpeg', '-y', '-i', in_file,
             '-vf', text_filter,
