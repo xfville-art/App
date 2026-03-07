@@ -5,54 +5,58 @@ def update_progress(text):
         f.write(text)
 
 def main():
-    # 1. Vérification sécurisée du fichier p.json
     if not os.path.exists('p.json'):
-        update_progress("Erreur: p.json absent")
+        update_progress("Erreur: p.json introuvable")
         return
 
     try:
         with open('p.json', 'r') as f:
-            raw_data = json.load(f)
+            raw = json.load(f)
         
-        # On gère les deux cas : JSON direct ou JSON encapsulé dans 'content'
-        if 'content' in raw_data:
-            data_str = base64.b64decode(raw_data['content']).decode('utf-8')
-            data = json.loads(data_str)
-        else:
-            data = raw_data # Si envoyé sans base64 par erreur
+        # Correction KeyError 'content'
+        encoded = raw.get('content', '')
+        if not encoded:
+            update_progress("Erreur: Payload vide")
+            return
             
+        data = json.loads(base64.b64decode(encoded).decode('utf-8'))
         videos = data.get('videos', [])
     except Exception as e:
-        update_progress(f"Erreur structure: {str(e)}")
+        update_progress(f"Erreur JSON: {str(e)}")
         return
 
-    processed = []
-    
-    # 2. Encodage des segments
+    segments = []
     for i, v in enumerate(videos):
-        in_f, out_f = f"in_{i}.mp4", f"seg_{i}.ts"
-        update_progress(f"Rendu Clip {i+1}/{len(videos)}...")
-        
-        with open(in_f, "wb") as f:
+        in_file, out_file = f"i_{i}.mp4", f"s_{i}.ts"
+        update_progress(f"Animation Clip {i+1}/{len(videos)}...")
+
+        with open(in_file, "wb") as f:
             f.write(base64.b64decode(v['data']))
-        
-        # Filtre texte et encodage ultra-rapide (4.7x speed dans tes logs)
+
+        # FILTRE ANIMÉ : Taille variable (sin) + Rebond vertical (cos)
+        # v['text'] est récupéré de l'interface
+        text_filter = (
+            f"scale=720:1280,"
+            f"drawtext=text='{v.get('text','')}':fontcolor=yellow:fontsize='60+20*sin(2*pi*t/3)':"
+            f"x=(w-text_w)/2:y=(h-text_h)/2+15*cos(2*pi*t/2):"
+            f"shadowcolor=black:shadowx=5:shadowy=5"
+        )
+
         cmd = [
-            'ffmpeg', '-y', '-i', in_f,
-            '-vf', f"scale=720:1280,drawtext=text='{v.get('text','')}':fontcolor=yellow:fontsize=50:x=(w-text_w)/2:y=(h-text_h)/2",
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', out_f
+            'ffmpeg', '-y', '-i', in_file,
+            '-vf', text_filter,
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', out_file
         ]
         subprocess.run(cmd)
-        processed.append(out_f)
+        segments.append(out_file)
 
-    # 3. Création du fichier final output.mp4 [Indispensable pour l'étape 6 de tes logs]
-    if processed:
+    # Fusion finale pour générer output.mp4
+    if segments:
         with open('concat.txt', 'w') as f:
-            for n in processed: f.write(f"file '{n}'\n")
+            for s in segments: f.write(f"file '{s}'\n")
         
         subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'concat.txt', '-c:v', 'copy', 'output.mp4'])
-        update_progress("TERMINÉ")
-        print("output.mp4 créé avec succès.")
+        update_progress("COMPLETED")
 
 if __name__ == "__main__":
     main()
