@@ -1,4 +1,13 @@
-import json, base64, os, subprocess
+import json, base64, os, subprocess, re
+
+def split_text_into_timed_parts(text, duration):
+    """Découpe le texte en segments pour l'animation"""
+    words = text.split()
+    if not words: return []
+    n = max(1, len(words) // 3) # Groupes de 3 mots
+    chunks = [" ".join(words[i:i+n]) for i in range(0, len(words), n)]
+    chunk_dur = duration / len(chunks)
+    return [(chunk, i*chunk_dur, (i+1)*chunk_dur) for i, chunk in enumerate(chunks)]
 
 def main():
     if not os.path.exists('p.json'):
@@ -18,35 +27,39 @@ def main():
     
     for i, v in enumerate(videos):
         input_name = f"in_{i}.mp4"
-        output_name = f"out_{i}.ts" # .ts est plus stable pour la fusion
+        output_name = f"out_{i}.ts"
         with open(input_name, "wb") as vf:
             vf.write(base64.b64decode(v['data']))
 
-        text = v.get('text', '').replace("'", "\\'").upper()
+        # Analyse de la durée réelle du clip via FFmpeg
+        probe = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', input_name], capture_output=True, text=True)
+        duration = float(probe.stdout.strip() or 2.0)
+
+        # --- FILTRES IA & ANIMATION ---
+        # 1. Zoom Panoramique (plus stable)
+        video_filter = f"scale=1280:-1,crop={res_w}:{res_h},setsar=1"
         
-        # --- FILTRES PUNCHY (Version Stable) ---
-        # On remplace zoompan par un scale/crop dynamique plus simple
-        # On ajoute un flash blanc de 0.1s au début de chaque clip
-        video_filter = (
-            f"scale={res_w*2}:-1,crop={res_w}:{res_h},setsar=1," # Recadrage propre
-            f"drawbox=y=0:color=white:width=iw:height=ih:t=fill:enable='between(t,0,0.1)'," # Flash blanc
-            f"eq=saturation=1.3:contrast=1.1" # Boost couleurs
-        )
-        
-        if text:
-            # Style TikTok : Texte Jaune, Bordure Noire, au milieu
-            video_filter += (
-                f",drawtext=text='{text}':fontcolor=yellow:fontsize=65:"
-                f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
-                f"x=(w-text_w)/2:y=(h-text_h)/2:borderw=5:bordercolor=black"
-            )
+        # 2. Animation des Textes (Captions Dynamiques)
+        text_str = v.get('text', '').replace("'", "\\'").upper()
+        if text_str:
+            parts = split_text_into_timed_parts(text_str, duration)
+            for chunk, start, end in parts:
+                # Effet de texte qui "pop" (jaune avec bordure noire)
+                video_filter += (
+                    f",drawtext=text='{chunk}':fontcolor=yellow:fontsize=70:"
+                    f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
+                    f"x=(w-text_w)/2:y=(h-text_h)/2+100:borderw=5:bordercolor=black:"
+                    f"enable='between(t,{start},{end})'"
+                )
+
+        # 3. Flash de transition
+        video_filter += f",drawbox=y=0:color=white:width=iw:height=ih:t=fill:enable='between(t,0,0.1)'"
 
         cmd = [
             'ffmpeg', '-y', '-i', input_name,
             '-vf', video_filter,
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20',
-            '-c:a', 'aac', '-ar', '44100', '-ac', '2', '-af', 'volume=1.5',
-            '-t', '5', # Limite à 5s par clip pour éviter les fichiers géants
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18',
+            '-c:a', 'aac', '-ar', '44100', '-af', 'volume=1.8',
             output_name
         ]
         subprocess.run(cmd, check=True)
@@ -56,15 +69,8 @@ def main():
     with open('list.txt', 'w') as f:
         for n in processed_clips: f.write(f"file '{n}'\n")
 
-    # On ré-encode légèrement la fin pour garantir la lecture sur iPhone/Android
-    final_cmd = [
-        'ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'list.txt',
-        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
-        'output.mp4'
-    ]
-    
-    subprocess.run(final_cmd, check=True)
-    print("Vidéo terminée avec succès !")
+    subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c', 'copy', 'output.mp4'], check=True)
+    print("Vidéo IA Capcut-Style terminée !")
 
 if __name__ == "__main__":
     main()
