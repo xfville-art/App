@@ -14,46 +14,45 @@ def main():
             raw = json.load(f)
         
         # Correction du KeyError 'content'
-        # On supporte l'encapsulation GitHub ou le JSON direct
-        encoded = raw.get('content', '')
-        if not encoded:
-            update_progress("Erreur: Données vides")
-            return
+        # On vérifie si les données sont encapsulées ou directes
+        content = raw.get('content', raw) 
+        if isinstance(content, str):
+            data = json.loads(base64.b64decode(content).decode('utf-8'))
+        else:
+            data = content
             
-        data = json.loads(base64.b64decode(encoded).decode('utf-8'))
         videos = data.get('videos', [])
     except Exception as e:
-        update_progress(f"Erreur JSON: {str(e)}")
+        update_progress(f"Erreur décodage: {str(e)}")
         return
 
     segments = []
     for i, v in enumerate(videos):
         in_f, out_f = f"i_{i}.mp4", f"s_{i}.ts"
-        update_progress(f"Rendu Animé Clip {i+1}/{len(videos)}...")
+        update_progress(f"Animation IA Clip {i+1}/{len(videos)}...")
 
         with open(in_f, "wb") as f:
             f.write(base64.b64decode(v['data']))
 
-        # FILTRE IA ANIMÉ : 
-        # fontsize : varie entre 55 et 85 (effet de respiration)
-        # y : mouvement de haut en bas de 25 pixels (rebond)
+        # FILTRE DYNAMIQUE : Le texte "respire" (zoom) et "bouge" (rebond)
+        # t = temps en secondes
         txt = v.get('text','').replace("'", "\\'")
-        filter_str = (
+        animation = (
             f"scale=720:1280,"
-            f"drawtext=text='{txt}':fontcolor=yellow:fontsize='70+15*sin(2*pi*t/2.5)':"
-            f"x=(w-text_w)/2:y=(h-text_h)/2+20*cos(2*pi*t/2):"
+            f"drawtext=text='{txt}':fontcolor=yellow:fontsize='70+20*sin(2*pi*t/3)':"
+            f"x=(w-text_w)/2:y=(h-text_h)/2+30*cos(2*pi*t/2):"
             f"shadowcolor=black:shadowx=4:shadowy=4"
         )
 
         cmd = [
             'ffmpeg', '-y', '-i', in_f,
-            '-vf', filter_str,
+            '-vf', animation,
             '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', out_f
         ]
         subprocess.run(cmd)
         segments.append(out_f)
 
-    # Création du fichier final
+    # Fusion finale pour générer output.mp4
     if segments:
         with open('concat.txt', 'w') as f:
             for s in segments: f.write(f"file '{s}'\n")
