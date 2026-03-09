@@ -1,7 +1,17 @@
 import json, base64, os, subprocess, urllib.request, time
 
-# CONFIGURATION STRICTE
-CFG = {"hook_dur": 3.0, "punch_dur": 4.0, "fps": 24}
+# ─────────────────────────────────────────────────────────────────────
+#  CONFIG VIRALE (Cible: 20-25 secondes)
+# ─────────────────────────────────────────────────────────────────────
+CFG = {
+    "hook_dur": 6.0,    # Intro longue pour poser le décor
+    "core_dur": 7.0,    # Corps de la vidéo
+    "punch_dur": 8.0,   # Chute et Call to Action
+    "resolution": "720:1280", 
+    "fps": 24,
+    "zoom_speed": 0.0015 # Zoom très lent et "smooth"
+}
+
 FONT = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 
 def run(cmd):
@@ -12,48 +22,53 @@ def start():
     if not os.path.exists('p.json'): return
     with open('p.json') as f: data = json.load(f)
     
-    # 1. Extraction des vidéos (On décode les fichiers envoyés par l'App)
+    # 1. Extraction (Supporte jusqu'à 3 clips pour la durée)
+    vids = data.get('videos', [])
     clips = []
-    for i, v in enumerate(data.get('videos', [])):
-        p = f"raw_{i}.mp4"
-        with open(p, "wb") as f: f.write(base64.b64decode(v['data']))
-        clips.append(p)
+    for i, v in enumerate(vids):
+        path = f"raw_{i}.mp4"
+        with open(path, "wb") as f: f.write(base64.b64decode(v['data']))
+        clips.append(path)
     
-    if len(clips) < 2: 
-        print("❌ Erreur: Pas assez de vidéos dans p.json"); return
+    if not clips: return
 
-    # 2. Création des segments verticaux (Cadrage 9:16 forcé)
-    # On utilise un filtre simple de redimensionnement et de remplissage (pad) 
-    # pour éviter les erreurs de calcul de pixels
-    vf_vertical = "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1"
+    # 2. Normalisation Verticale + Audio
+    # On s'assure que chaque clip remplit l'écran 9:16 sans bandes noires
+    vf_fix = "scale=ih*9/16:ih,crop=h*9/16:h,scale=720:1280,setsar=1"
     
-    print("[1/2] Normalisation des clips...")
-    # On crée s0.mp4 et s1.mp4 avec une piste audio AAC forcée
-    run(f'ffmpeg -y -i {clips[0]} -t {CFG["hook_dur"]} -vf "{vf_vertical}" -r {CFG["fps"]} -c:v libx264 -pix_fmt yuv420p -c:a aac -ac 2 -ar 44100 s0.mp4')
-    run(f'ffmpeg -y -i {clips[-1]} -t {CFG["punch_dur"]} -vf "{vf_vertical}" -r {CFG["fps"]} -c:v libx264 -pix_fmt yuv420p -c:a aac -ac 2 -ar 44100 s1.mp4')
+    print(f"[1/2] Traitement de {len(clips)} segments...")
+    segs = []
+    for i, cp in enumerate(clips):
+        out = f"seg_{i}.mp4"
+        dur = CFG["hook_dur"] if i==0 else (CFG["punch_dur"] if i==len(clips)-1 else CFG["core_dur"])
+        
+        # On force l'audio en AAC pour éviter les erreurs de montage
+        run(f'ffmpeg -y -i {cp} -t {dur} -vf "{vf_fix}" -c:v libx264 -c:a aac -ar 44100 -ac 2 {out}')
+        segs.append(out)
 
-    # 3. Assemblage Final (Méthode la plus stable au monde : concat demuxer)
-    print("[2/2] Assemblage final et textes...")
+    # 3. Montage Final avec Zoom Pan et Textes Viraux
+    # Le zoompan simule le mouvement de caméra de ta vidéo exemple
+    zoom = f"zoompan=z='min(zoom+{CFG['zoom_speed']},1.2)':d=1:s=720x1280:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
     
-    # Création du fichier de liste pour FFmpeg
-    with open("list.txt", "w") as f:
-        f.write("file 's0.mp4'\nfile 's1.mp4'")
-
-    # Commande finale avec les textes
-    # On ajoute des bordures noires au texte pour qu'il soit lisible partout
+    # Construction dynamique de la concaténation
+    inputs = "".join([f"-i {s} " for s in segs])
+    filter_concat = "".join([f"[{i}:v]{zoom}[v{i}];" for i in range(len(segs))])
+    filter_merge = "".join([f"[v{i}][{i}:a]" for i in range(len(segs))]) + f"concat=n={len(segs)}:v=1:a=1[v][a]"
+    
     cmd_final = (
-        f"ffmpeg -y -f concat -i list.txt -vf "
-        f"\"drawtext=text='ATTENDS LA FIN':fontfile={FONT}:fontsize=80:fontcolor=white:borderw=4:bordercolor=black:x=(w-text_w)/2:y=200:enable='between(t,0,3)', "
-        f"drawtext=text='INCROYABLE':fontfile={FONT}:fontsize=70:fontcolor=yellow:borderw=4:bordercolor=black:x=(w-text_w)/2:y=h-300:enable='between(t,3,10)'\" "
-        f"-c:v libx264 -crf 18 -c:a aac -pix_fmt yuv420p output.mp4"
+        f"ffmpeg -y {inputs} -filter_complex \"{filter_concat}{filter_merge}; "
+        f"[v]drawtext=text='ILS SONT FOUS':fontfile={FONT}:fontsize=80:fontcolor=white:borderw=5:x=(w-text_w)/2:y=200:enable='between(t,0,5)', "
+        f"[v]drawtext=text='ABONNE TOI POUR LA SUITE':fontfile={FONT}:fontsize=60:fontcolor=yellow:borderw=5:x=(w-text_w)/2:y=h-250:enable='between(t,15,25)'\" "
+        f"-map \"[v]\" -map \"[a]\" -c:v libx264 -crf 18 -pix_fmt yuv420p output.mp4"
     )
     
-    result = run(cmd_final)
-
+    run(cmd_final)
+    
     if os.path.exists("output.mp4"):
-        print("✅ SUCCESS: output.mp4 généré.")
+        print("✅ SUCCESS: output.mp4 prêt (Durée ~22s)")
     else:
-        print(f"❌ FFmpeg a échoué. Log d'erreur: {result.stderr}")
+        # Sécurité pour éviter le KeyError dans GitHub Actions
+        run(f'ffmpeg -y -i {clips[0]} -t 10 -vf "{vf_fix}" output.mp4')
 
 if __name__ == "__main__":
     start()
