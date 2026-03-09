@@ -1,85 +1,114 @@
 import json, base64, os, subprocess, urllib.request, time, re
 
 # ─────────────────────────────────────────────────────────────────────
-#  CONFIG VITALITÉ & SÉCURITÉ
+#  CONFIG GEMINI & VITALITÉ
 # ─────────────────────────────────────────────────────────────────────
 CFG = {
     "total_target_dur": 25.0,
     "fps": 24,
-    "res": "720:1280",
-    "zoom_speed": 0.0012, # Zoom constant ultra-fluide
+    "zoom_speed": 0.0012,
     "crf": 18
 }
 
 FONT = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
-API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+# Pense à ajouter GEMINI_API_KEY dans tes secrets GitHub
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 def run(cmd):
     return subprocess.run(cmd, shell=True, capture_output=True, text=True)
 
-# ── FONCTION DE PROTECTION (Le "Bouclier") ──
 def clean_text(t):
+    """Bouclier anti-crash : supprime : " ' et garde l'essentiel"""
     if not t: return ""
-    # 1. Supprime les deux-points (:) et les guillemets (") et (')
-    # 2. Remplace les caractères spéciaux par des espaces ou rien
     t = t.replace(":", " ").replace('"', " ").replace("'", " ")
-    # 3. Supprime tout ce qui n'est pas alphanumérique ou ponctuation de base
     t = re.sub(r"[^a-zA-Z0-9 !?À-ÿ]", "", t)
-    return t.strip().upper() # Force en Majuscules pour le style viral
+    return t.strip().upper()
+
+def get_gemini_creative(frame_b64):
+    """Appel à Gemini 1.5 Flash pour le texte et la couleur"""
+    if not GEMINI_KEY:
+        return {"h": "TAS VU CA ?", "p": "ABONNE TOI", "c": "#FFFF00"}
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
+    
+    prompt = (
+        "Analyse cette carte Les Crados. "
+        "1. Crée un HOOK viral et une PUNCHLINE drôle. "
+        "2. Choisis une COULEUR HEXADÉCIMALE vive (fluo) présente sur l'image pour le texte. "
+        "Interdiction de mettre des guillemets ou deux-points. "
+        "Réponds UNIQUEMENT en JSON : {\"hook\": \"...\", \"punch\": \"...\", \"color\": \"#RRGGBB\"}"
+    )
+
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": prompt},
+                {"inline_data": {"mime_type": "image/jpeg", "data": frame_b64}}
+            ]
+        }]
+    }
+
+    try:
+        req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=15) as response:
+            res = json.loads(response.read())
+            raw = res['candidates'][0]['content']['parts'][0]['text']
+            # Extraction propre du JSON
+            match = re.search(r'\{.*\}', raw, re.DOTALL)
+            data = json.loads(match.group())
+            return {
+                "h": clean_text(data.get("hook", "INCROYABLE")),
+                "p": clean_text(data.get("punch", "SUITE BIENTOT")),
+                "c": data.get("color", "#FFFF00") # Jaune par défaut
+            }
+    except:
+        return {"h": "REGARDE BIEN", "p": "ABONNE TOI", "c": "#FFFF00"}
 
 def start():
     if not os.path.exists('p.json'): return
     with open('p.json') as f: data = json.load(f)
     
-    # 1. Extraction
-    clips_raw = []
-    for i, v in enumerate(data.get('videos', [])):
-        p = f"raw_{i}.mp4"
+    # 1. Extraction et Frame pour l'IA
+    vids = data.get('videos', [])
+    clips = []
+    for i, v in enumerate(vids):
+        p = f"raw_{i}.mp4"; f_b64 = ""
         with open(p, "wb") as f: f.write(base64.b64decode(v['data']))
-        clips_raw.append(p)
+        clips.append(p)
     
-    if not clips_raw: return
-    num_clips = len(clips_raw)
-    dur_per_clip = CFG["total_target_dur"] / num_clips
+    # On prend une frame au milieu du premier clip pour Gemini
+    run(f'ffmpeg -y -i {clips[0]} -ss 1 -vframes 1 -q:v 2 thumb.jpg')
+    with open("thumb.jpg", "rb") as f: f_b64 = base64.b64encode(f.read()).decode()
 
-    # 2. IA Vision (Avec consignes de sécurité strictes)
-    texts = {"h": "ILS SONT COMPLÈTEMENT CRADOS", "p": "ABONNE TOI POUR LA SUITE"}
-    
-    if API_KEY:
-        # Prompt modifié pour interdire les caractères spéciaux à la source
-        prompt = "Génère un hook et une punchline pour Les Crados. INTERDICTION de mettre des guillemets ou des deux-points. Réponds en JSON : {\"hook\": \"...\", \"punch\": \"...\"}"
-        # ... (Logique d'appel API Claude ici) ...
+    # 2. Intelligence Artificielle Gemini
+    idea = get_gemini_creative(f_b64)
+    print(f"✨ Gemini suggère : {idea['h']} avec la couleur {idea['c']}")
 
-    # Nettoyage de sécurité final (Même si l'IA se trompe)
-    safe_h = clean_text(texts.get("h", "ATTENTION"))
-    safe_p = clean_text(texts.get("p", "SUITE BIENTÔT"))
-
-    # 3. Traitement des segments (Verticalité + Zoom)
-    segments = []
-    vf_base = f"scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1"
+    # 3. Préparation des segments (9:16 + Zoom)
+    num = len(clips)
+    dur = CFG["total_target_dur"] / num
+    segs = []
+    vf = f"scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1"
     zoom = f"zoompan=z='min(zoom+{CFG['zoom_speed']},1.3)':d=1:s=720x1280:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
 
-    for i, cp in enumerate(clips_raw):
+    for i, cp in enumerate(clips):
         out = f"seg_{i}.mp4"
-        # On force la création d'une piste audio AAC pour chaque morceau
-        run(f'ffmpeg -y -i {cp} -t {dur_per_clip} -vf "{vf_base},{zoom}" -c:v libx264 -c:a aac -ar 44100 -ac 2 {out}')
-        if os.path.exists(out): segments.append(out)
+        run(f'ffmpeg -y -i {cp} -t {dur} -vf "{vf},{zoom}" -c:v libx264 -c:a aac -ar 44100 -ac 2 {out}')
+        segs.append(out)
 
-    # 4. Assemblage final
-    if not segments: return
+    # 4. Assemblage Final
     with open("list.txt", "w") as f:
-        for s in segments: f.write(f"file '{s}'\n")
+        for s in segs: f.write(f"file '{s}'\n")
 
-    # On utilise des simples quotes (') pour FFmpeg et on a déjà purgé les (') du texte
     cmd_final = (
         f"ffmpeg -y -f concat -i list.txt -vf "
-        f"\"drawtext=text='{safe_h}':fontfile={FONT}:fontsize=75:fontcolor=white:borderw=6:bordercolor=black:x=(w-text_w)/2:y=250:enable='between(t,0,6)', "
-        f"drawtext=text='{safe_p}':fontfile={FONT}:fontsize=60:fontcolor=yellow:borderw=6:bordercolor=black:x=(w-text_w)/2:y=h-300:enable='between(t,{CFG['total_target_dur']-6},{CFG['total_target_dur']})'\" "
+        f"\"drawtext=text='{idea['h']}':fontfile={FONT}:fontsize=80:fontcolor={idea['c']}:borderw=6:bordercolor=black:x=(w-text_w)/2:y=200:enable='between(t,0,6)', "
+        f"drawtext=text='{idea['p']}':fontfile={FONT}:fontsize=65:fontcolor={idea['c']}:borderw=6:bordercolor=black:x=(w-text_w)/2:y=h-300:enable='between(t,{CFG['total_target_dur']-7},{CFG['total_target_dur']})'\" "
         f"-c:v libx264 -crf {CFG['crf']} -c:a aac -pix_fmt yuv420p output.mp4"
     )
     
     run(cmd_final)
-    if os.path.exists("output.mp4"): print("✅ output.mp4 généré et protégé.")
+    if os.path.exists("output.mp4"): print("✅ Rendu Gemini terminé.")
 
 if __name__ == "__main__":
     start()
