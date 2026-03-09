@@ -1,11 +1,12 @@
 import json, base64, os, subprocess, re
 
-# CONFIGURATION STYLE VIRAL (Style 1000026660.mp4)
+# CONFIGURATION ÉLÉGANTE
 CFG = {
-    "total_dur": 12.0,  # Plus court = plus d'impact
+    "total_dur": 15.0,
     "res": "720x1280",
     "fps": 24,
-    "text_size": 95,
+    "text_size": 55,       # Texte plus petit et élégant
+    "padding": 80,         # Espace par rapport aux bords
     "watermark": "@LesCrados.ai"
 }
 
@@ -20,62 +21,56 @@ def start():
     
     videos = data.get('videos', [])
     num = len(videos)
-    # Durée par clip très courte pour le dynamisme (Jump Cuts)
     dur_seg = CFG["total_dur"] / num
-    
     processed = []
-    # Textes percutants sans ponctuation pour FFmpeg
-    punchlines = ["TROP BIZARRE", "INCROYABLE", "C EST QUOI ?", "ABONNE TOI"]
+    
+    # Textes plus narratifs et sobres
+    punchlines = ["L'art de l'immonde", "Édition limitée", "Le génie du chaos", "Collection 2024"]
 
     for i, v in enumerate(videos):
         raw = f"r{i}.mp4"
         with open(raw, "wb") as f: f.write(base64.b64decode(v['data']))
-        
         out = f"s{i}.mp4"
-        # Montage : Pas de zoom, juste un cadrage parfait 9:16
-        # On garde l'audio d'origine (-c:a aac)
-        vf = "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280"
         
-        cmd = (f'ffmpeg -y -i {raw} -t {dur_seg} -vf "{vf}" '
-               f'-c:v libx264 -crf 18 -c:a aac -ar 44100 {out}')
-        run(cmd)
+        # Ajout d'un léger flou sur les bords (Vignette) pour le côté Premium
+        vf = ("scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,"
+              "vignette=angle=0.2:x0=w/2:y0=h/2")
+        
+        run(f'ffmpeg -y -i {raw} -t {dur_seg} -vf "{vf}" -c:v libx264 -crf 18 -c:a aac {out}')
         processed.append(out)
 
-    # 1. Concaténation Vidéo + Audio
     with open("l.txt", "w") as f:
         for c in processed: f.write(f"file '{c}'\n")
-    run("ffmpeg -y -f concat -i l.txt -c:v copy -c:a copy full_base.mp4")
+    run("ffmpeg -y -f concat -i l.txt -c:v copy -c:a copy base.mp4")
 
-    # 2. Ajout des Textes "Pop" et Watermark
-    # On crée une chaîne de filtres pour que chaque texte apparaisse pile sur son clip
+    # --- FILTRES TEXTES MODERNES ---
     text_filters = []
     for i in range(num):
         t_start = i * dur_seg
         t_end = (i + 1) * dur_seg
-        txt = punchlines[i % len(punchlines)]
-        color = "white" if i % 2 == 0 else "yellow"
+        txt = punchlines[i % len(punchlines)].upper()
         
-        # Style : Gros texte centré, bordure noire très épaisse
+        # Effet : Texte en bas avec une petite barre de soulignement moderne
+        # Animation d'opacité (Fade in/out doux)
         f_txt = (f"drawtext=text='{txt}':fontfile={FONT}:fontsize={CFG['text_size']}:"
-                 f"fontcolor={color}:borderw=15:bordercolor=black:"
-                 f"x=(w-text_w)/2:y=(h-text_h)/2:enable='between(t,{t_start},{t_end})'")
+                 f"fontcolor=white:x=(w-text_w)/2:y=h-{CFG['padding']}-100:"
+                 f"alpha='if(lt(t,{t_start}+0.3), (t-{t_start})/0.3, if(gt(t,{t_end}-0.3), ({t_end}-t)/0.3, 1))':"
+                 f"enable='between(t,{t_start},{t_end})'")
         text_filters.append(f_txt)
 
-    # Watermark permanent
-    brand = f"drawtext=text='{CFG['watermark']}':fontfile={FONT}:fontsize=35:fontcolor=white@0.4:x=w-text_w-50:y=120"
+    # Watermark ultra-discret en haut à droite
+    brand = f"drawtext=text='{CFG['watermark']}':fontfile={FONT}:fontsize=28:fontcolor=white@0.2:x=w-text_w-40:y=60"
     
-    # Rendu Final
-    all_filters = ",".join(text_filters)
+    # Filtre de couleur "Cinéma" (Légère teinte froide/bleutée pour moderniser)
+    color_grade = "curves=preset=lighter"
+
     final_cmd = (
-        f"ffmpeg -y -i full_base.mp4 -vf \"{brand},{all_filters}\" "
-        f"-c:v libx264 -c:a copy -pix_fmt yuv420p output.mp4"
+        f"ffmpeg -y -i base.mp4 -vf \"{color_grade},{brand},{','.join(text_filters)}\" "
+        f"-c:v libx264 -c:a copy output.mp4"
     )
     
-    print("🎬 Génération du rendu final...")
     run(final_cmd)
-    
-    if os.path.exists("output.mp4"):
-        print("✅ RENDU COMPLET RÉUSSI")
+    print("✅ Rendu v25 : Montage Modern Pro terminé.")
 
 if __name__ == "__main__":
     start()
