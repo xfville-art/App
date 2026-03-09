@@ -1,10 +1,7 @@
 import json, base64, os, subprocess
 
-# CONFIGURATION ÉLARGIE POUR LE MODE CINÉMA
 CFG = {
-    "cinema_dur": 26.0,       # On passe de 7s à 26s
-    "cinema_clip_min": 6.0,   # Durée minimum par plan
-    "cinema_xfade": 1.0,      # Transitions fondu-enchaîné plus longues
+    "total_dur": 26.0,  # Format long
     "res": "720x1280",
     "fps": 24
 }
@@ -18,37 +15,39 @@ def start():
     
     videos = data.get('videos', [])
     num = len(videos)
-    # On calcule la durée de chaque clip pour atteindre les 26 secondes
-    dur_seg = CFG["cinema_dur"] / num
+    dur_seg = CFG["total_dur"] / num
     processed = []
 
     for i, v in enumerate(videos):
         raw = f"r{i}.mp4"
         with open(raw, "wb") as f: f.write(base64.b64decode(v['data']))
-        out = f"s{i}.mp4"
+        out = f"s{i}.ts" # Utilisation de .ts pour une meilleure stabilité de concaténation
         
-        # 🎬 EFFET "KEN BURNS" (Zoom lent progressif)
-        # Cela évite l'ennui sur les plans longs en créant un mouvement constant
-        vf = (f"scale=800:1422:force_original_aspect_ratio=increase,crop=720:1280,"
-              f"zoompan=z='zoom+0.0005':d={dur_seg*CFG['fps']}:s=720x1280,setpts=PTS-STARTPTS")
+        # 🛡️ SOLUTION AU FREEZE : 
+        # 1. '-fflags +genpts' : Recrée les marqueurs de temps dès la lecture.
+        # 2. 'fps=24' : Force la génération de nouvelles images pour combler les manques.
+        # 3. 'format=yuv420p' : Standardise le format pour tous les lecteurs.
+        vf = (f"scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,"
+              f"fps={CFG['fps']},setpts=PTS-STARTPTS")
         
-        run(f'ffmpeg -y -i {raw} -t {dur_seg} -vf "{vf}" -c:v libx264 -crf 18 {out}')
+        cmd = (f'ffmpeg -y -fflags +genpts -i {raw} -t {dur_seg} -vf "{vf}" '
+               f'-c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p -an {out}')
+        run(cmd)
         processed.append(out)
 
-    # CONCATÉNATION AVEC CROSSFADE (Fondu enchaîné)
-    # Le fondu donne cette impression de "film" plutôt que de "zapping"
-    filter_complex = ""
-    for i in range(num):
-        filter_complex += f"[{i}:v]"
+    # Concaténation ultra-stable via Transport Stream
+    concat_cmd = f"ffmpeg -y -i \"concat:{'|'.join(processed)}\" -c copy no_audio.mp4"
+    run(concat_cmd)
+
+    # Réintégration de l'audio d'origine (sur toute la longueur)
+    # On prend l'audio du premier clip r0.mp4 par défaut
+    final_cmd = (
+        f"ffmpeg -y -i no_audio.mp4 -i r0.mp4 -map 0:v -map 1:a? "
+        f"-c:v copy -c:a aac -shortest output.mp4"
+    )
     
-    # Commande Simplifiée pour la fusion des segments avec fondu
-    # (Note: nécessite au moins 2 clips)
-    with open("l.txt", "w") as f:
-        for c in processed: f.write(f"file '{c}'\n")
-    
-    # Version sécurisée pour la longueur
-    run("ffmpeg -y -f concat -safe 0 -i l.txt -c:v libx264 -crf 20 -pix_fmt yuv420p output.mp4")
-    print(f"🎬 Rendu CINÉMA de {CFG['cinema_dur']}s terminé.")
+    run(final_cmd)
+    print("✅ Rendu v32 terminé : Le mouvement vidéo est rétabli.")
 
 if __name__ == "__main__":
     start()
