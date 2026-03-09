@@ -19,35 +19,40 @@ def start():
     videos = data.get('videos', [])
     processed = []
     
-    # Étape 1 : Préparation de chaque clip (sans aucune coupe de temps)
+    # 1. Préparation des segments individuels (Normalisation)
     for i, v in enumerate(videos):
         raw = f"r{i}.mp4"
         with open(raw, "wb") as f: f.write(base64.b64decode(v['data']))
         out = f"s{i}.mp4"
         
-        # On traite le visuel mais on garde l'audio original de chaque clip
+        # On force le ré-encodage complet pour que tous les clips aient les mêmes propriétés
         vf = f"scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,fps={CFG['fps']},setpts=PTS-STARTPTS"
-        run(f'ffmpeg -y -i {raw} -vf "{vf}" -c:v libx264 -crf 18 -c:a aac -af "asetpts=PTS-STARTPTS" {out}')
+        run(f'ffmpeg -y -i {raw} -vf "{vf}" -c:v libx264 -crf 18 -c:a aac -af "asetpts=PTS-STARTPTS" -ar 44100 {out}')
         processed.append(out)
 
-    # Étape 2 : Concaténation totale (Vidéo + Audio de tous les clips)
-    with open("l.txt", "w") as f:
-        for c in processed: f.write(f"file '{c}'\n")
+    # 2. Concaténation complexe (Vidéo + Audio cumulés)
+    # Cette méthode additionne physiquement les durées au lieu de les superposer
+    filter_complex = ""
+    for i in range(len(processed)):
+        filter_complex += f"[{i}:v][i:a]" # Utilise la vidéo et l'audio de chaque fichier
     
-    # Utilisation du protocole concat pour fusionner les flux sans perte de durée
-    run("ffmpeg -y -f concat -safe 0 -i l.txt -c copy full_temp.mp4")
+    inputs = " ".join([f"-i {p}" for p in processed])
+    concat_cmd = (f"ffmpeg -y {inputs} -filter_complex \""
+                  f"{''.join([f'[{i}:v][{i}:a]' for i in range(len(processed))])}concat=n={len(processed)}:v=1:a=1[v][a]\" "
+                  f"-map \"[v]\" -map \"[a]\" -c:v libx264 -crf 18 -c:a aac long_base.mp4")
+    run(concat_cmd)
 
-    # Étape 3 : Analyse de la durée réelle pour placer les textes
-    res = run("ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 full_temp.mp4")
+    # 3. Récupération de la nouvelle durée réelle
+    res = run("ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 long_base.mp4")
     total_dur = float(res.stdout.strip())
-    dur_per_segment = total_dur / len(processed)
+    dur_per_txt = total_dur / len(processed)
 
-    # Étape 4 : Ajout des filtres visuels et textes sur la durée complète
+    # 4. Habillage (Textes + Watermark)
     punchlines = ["EXPÉRIENCE INTERDITE", "MUTATION GÉNIALE", "L'ART DU PIRE", "COLLECTION 2026"]
     text_filters = []
     for i in range(len(processed)):
-        t_start = i * dur_per_segment
-        t_end = (i + 1) * dur_per_segment
+        t_start = i * dur_per_txt
+        t_end = (i + 1) * dur_per_txt
         txt = punchlines[i % len(punchlines)]
         f_txt = (f"drawtext=text='{txt}':fontfile={FONT}:fontsize={CFG['text_size']}:"
                  f"fontcolor=white:shadowcolor=black@0.6:shadowx=3:shadowy=3:"
@@ -56,11 +61,11 @@ def start():
 
     brand = f"drawtext=text='{CFG['watermark']}':fontfile={FONT}:fontsize=24:fontcolor=white@0.2:x=w-text_w-40:y=60"
     
-    # Rendu final sans l'option -shortest qui pourrait couper la vidéo prématurément
-    final_filters = f"{brand},{','.join(text_filters)},unsharp=3:3:1.5"
-    run(f'ffmpeg -y -i full_temp.mp4 -vf "{final_filters}" -c:v libx264 -crf 18 -c:a copy output.mp4')
+    # Rendu Final sans aucune restriction de durée
+    final_filters = f"{brand},{','.join(text_filters)}"
+    run(f'ffmpeg -y -i long_base.mp4 -vf "{final_filters}" -c:v libx264 -crf 18 -c:a copy output.mp4')
     
-    print(f"🎬 Rendu FINAL terminé. Durée : {total_dur:.2f} secondes.")
+    print(f"🎬 Rendu v35 terminé. DURÉE RÉELLE : {total_dur:.2f}s")
 
 if __name__ == "__main__":
     start()
