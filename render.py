@@ -3,7 +3,7 @@ import json, base64, os, subprocess, requests
 CFG = {
     "res": "720x1280",
     "fps": 24,
-    "base_size": 50,
+    "base_size": 60,
     "api_key": os.getenv("GEMINI_API_KEY")
 }
 
@@ -11,11 +11,11 @@ FONT = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 
 def ask_gemini(prompt):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={CFG['api_key']}"
-    payload = {"contents": [{"parts": [{"text": f"Génère une punchline Crados (trash/drôle) de 2-3 mots max pour : {prompt}. Pas de ponctuation."}]}]}
+    payload = {"contents": [{"parts": [{"text": f"Génère une punchline Crados (2 mots max) pour : {prompt}. Uniquement le texte."}]}]}
     try:
         r = requests.post(url, json=payload, timeout=5)
         return r.json()['candidates'][0]['content']['parts'][0]['text'].upper().replace("'", "").strip()
-    except: return "CATASTROPHE !"
+    except: return "GROS CRADO"
 
 def start():
     if not os.path.exists('p.json'): return
@@ -41,28 +41,31 @@ def start():
         for p in processed: f.write(f"file '{p}'\n")
     subprocess.run("ffmpeg -y -f concat -safe 0 -i list.txt -c copy base.mp4", shell=True)
 
-    # 3. SCRIPT DE FILTRES DYNAMIQUES (L'animation est ici)
-    res = subprocess.run("ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 base.mp4", shell=True, capture_output=True, text=True)
+    # 3. SCRIPT DE FILTRES "HYPER-ANIMÉS"
+    res = subprocess.run("ffprobe -v error -show_entries format=duration -of default=nokey=1 base.mp4", shell=True, capture_output=True, text=True)
     total_dur = float(res.stdout.strip())
     dur_seg = total_dur / len(processed)
 
     with open("myscript.txt", "w") as f:
-        # Watermark fixe
-        filters = [f"drawtext=text='@LESCRADOS':fontfile={FONT}:fontsize=20:fontcolor=white@0.2:x=w-text_w-40:y=60"]
-        
+        filters = []
         for i, txt in enumerate(dynamic_texts):
             t_start = i * dur_seg
-            t_rel = f"(t-{t_start})" # Temps relatif au début du clip
+            t_rel = f"(t-{t_start})"
             
-            # --- FORMULES D'ANIMATION ---
-            # Zoom "Pop" : Le texte part de 120% de sa taille et descend à 100% en 0.3s
-            size = f"if(lt({t_rel},0.3), {CFG['base_size']}*(1.2-({t_rel}*0.66)), {CFG['base_size']})"
+            # --- ANIMATIONS COMPLEXES ---
+            # 1. Effet Ressort (Elastic Pop) sur la taille
+            # Le texte oscille rapidement avant de se stabiliser
+            s_anim = f"{CFG['base_size']}*(1+0.5*exp(-5*{t_rel})*cos(2*PI*5*{t_rel}))"
             
-            # Flottement (Shake) : Oscillation légère en Y pour donner de la vie
-            y_pos = f"(h-250)+(5*sin(2*PI*t/0.5))"
+            # 2. Rotation légère (Wobble)
+            # On simule une rotation via un décalage de X sinusoïdal
+            x_anim = f"(w-text_w)/2 + 10*sin(2*PI*{t_rel}/0.4)"
             
-            f_txt = (f"drawtext=text='{txt}':fontfile={FONT}:fontcolor=yellow:borderw=4:bordercolor=black:"
-                     f"fontsize='{size}':x=(w-text_w)/2:y='{y_pos}':"
+            # 3. Couleur Flashy (alternance Jaune / Vert Crado)
+            color = f"if(lt(mod({t_rel},0.4),0.2),yellow,lime)"
+            
+            f_txt = (f"drawtext=text='{txt}':fontfile={FONT}:fontcolor={color}:borderw=6:bordercolor=black:"
+                     f"fontsize='{s_anim}':x='{x_anim}':y=(h-300):"
                      f"enable='between(t,{t_start},{t_start+dur_seg})'")
             filters.append(f_txt)
         
@@ -70,6 +73,7 @@ def start():
 
     # 4. Rendu Final
     subprocess.run(f"ffmpeg -y -i base.mp4 -filter_script:v myscript.txt -c:v libx264 -crf 18 -c:a copy output.mp4", shell=True)
+    print(f"🔥 Rendu v45 HYPER-ANIMÉ terminé.")
 
 if __name__ == "__main__":
     start()
