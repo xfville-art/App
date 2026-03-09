@@ -1,13 +1,12 @@
 import json, base64, os, subprocess, urllib.request, time, re
 
 # ─────────────────────────────────────────────────────────────────────
-#  CONFIG DYNAMIQUE & RÉTENTION
+#  PARAMÈTRES DE RENDU VIRAL
 # ─────────────────────────────────────────────────────────────────────
 CFG = {
     "total_dur": 25.0,
     "fps": 24,
-    "res": "720:1280",
-    "zoom_speed": 0.002, # Zoom plus nerveux pour le dynamisme
+    "res": "720x1280",
     "crf": 18
 }
 
@@ -15,26 +14,28 @@ FONT = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 def run(cmd):
-    return subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    print(f"  ▸ FFmpeg en cours...")
+    r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    if r.returncode != 0: print(f"  ❌ Erreur: {r.stderr[:200]}")
+    return r
 
 def clean(t):
-    """Nettoyage strict pour éviter les crashs FFmpeg"""
     if not t: return ""
+    # On autorise uniquement Alphanumérique et les points d'exclamation
     t = re.sub(r"[^a-zA-Z0-9 !?À-ÿ]", "", t)
     return t.strip().upper()
 
-def get_gemini_data(frame_b64):
-    """Analyse Vision + Scripting Viral"""
+def get_gemini_punch(frame_b64):
     if not GEMINI_KEY:
-        return {"h": "NE SWIPE PAS", "m": "C'EST INCROYABLE", "p": "ABONNE-TOI", "c": "#FF00FF"}
+        return {"h": "NE REGARDE PAS", "m": "C'EST HORRIBLE", "p": "ABONNE TOI", "c": "yellow"}
     
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
     prompt = (
-        "Tu es un monteur vidéo viral. Analyse cette image 'Les Crados'. "
-        "Génère 3 textes : 1 HOOK (0-4s), 1 DESCRIPTION (5-12s), 1 PUNCHLINE (18-25s). "
-        "Choisis une COULEUR HEX vive présente dans l'image. "
-        "PAS DE : NI DE \". RÉPONSE JSON UNIQUEMENT : "
-        "{\"h\": \"TEXTE\", \"m\": \"TEXTE\", \"p\": \"TEXTE\", \"c\": \"#HEX\"}"
+        "Analyse cette image Crados. "
+        "Génère 3 textes courts (4 mots max) : 1 HOOK, 1 DESCRIPTION, 1 PUNCHLINE. "
+        "Choisis une couleur HEX vive. "
+        "IMPORTANT: AUCUN CARACTERE SPECIAL (pas de : ni \"). "
+        "JSON: {\"h\": \"...\", \"m\": \"...\", \"p\": \"...\", \"c\": \"#HEX\"}"
     )
     
     data = {"contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "image/jpeg", "data": frame_b64}}]}]}
@@ -43,54 +44,59 @@ def get_gemini_data(frame_b64):
         with urllib.request.urlopen(req, timeout=12) as res:
             raw = json.loads(res.read())['candidates'][0]['content']['parts'][0]['text']
             js = json.loads(re.search(r'\{.*\}', raw, re.DOTALL).group())
-            return { "h": clean(js['h']), "m": clean(js['m']), "p": clean(js['p']), "c": js.get('c', '#FFFF00') }
+            return { "h": clean(js['h']), "m": clean(js['m']), "p": clean(js['p']), "c": js.get('c', 'yellow') }
     except:
-        return {"h": "REGARDE BIEN", "m": "C'EST FOU", "p": "SUITE BIENTÔT", "c": "#FFFF00"}
+        return {"h": "C'EST FOU", "m": "REGARDE CA", "p": "ABONNE TOI", "c": "yellow"}
 
 def start():
     if not os.path.exists('p.json'): return
     with open('p.json') as f: data = json.load(f)
     
-    # 1. Extraction et Analyse Image
-    clips = []
+    # 1. Extraction et Analyse Gemini
+    clips_raw = []
     for i, v in enumerate(data.get('videos', [])):
         p = f"r{i}.mp4"
         with open(p, "wb") as f: f.write(base64.b64decode(v['data']))
-        clips.append(p)
+        clips_raw.append(p)
     
-    run(f'ffmpeg -y -i {clips[0]} -ss 1 -vframes 1 thumb.jpg')
-    with open("thumb.jpg", "rb") as f: f_b64 = base64.b64encode(f.read()).decode()
-    ai = get_gemini_data(f_b64)
+    run(f'ffmpeg -y -i {clips_raw[0]} -vframes 1 t.jpg')
+    with open("t.jpg", "rb") as f: f_b64 = base64.b64encode(f.read()).decode()
+    ai = get_gemini_punch(f_b64)
 
-    # 2. Préparation des segments (Zoom & Portrait)
+    # 2. Création des segments avec ZOOM DYNAMIQUE (Effet "Punch")
+    dur = CFG["total_dur"] / len(clips_raw)
     segs = []
-    dur = CFG["total_dur"] / len(clips)
-    vf = "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1"
-    zp = f"zoompan=z='min(zoom+{CFG['zoom_speed']},1.4)':d=1:s=720x1280:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-
-    for i, cp in enumerate(clips):
+    # On alterne le zoom entre chaque segment pour créer une cassure visuelle (Jump Cut)
+    for i, cp in enumerate(clips_raw):
         out = f"s{i}.mp4"
-        run(f'ffmpeg -y -i {cp} -t {dur} -vf "{vf},{zp}" -c:v libx264 -c:a aac -ar 44100 s{i}.mp4')
+        z_val = "1.1+0.2*sin(t*2)" # Zoom qui pulse légèrement
+        vf = f"scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,zoompan=z='{z_val}':d=1:s=720x1280"
+        run(f'ffmpeg -y -i {cp} -t {dur} -vf "{vf}" -c:v libx264 -c:a aac -ar 44100 s{i}.mp4')
         segs.append(out)
 
-    # 3. Montage Final avec Textes Punchy (Effet Pop)
-    with open("list.txt", "w") as f:
+    # 3. Assemblage intermédiaire
+    with open("l.txt", "w") as f:
         for s in segs: f.write(f"file '{s}'\n")
+    run(f"ffmpeg -y -f concat -i l.txt -c copy tmp.mp4")
 
-    # Filtre de texte avec animations de timing
+    # 4. INCROSTATION TEXTE PUNCHY (Le moment où ça débarque)
+    # Style: Ombre portée, tremblement sur le CTA
     draw = f"fontfile={FONT}:borderw=8:bordercolor=black:x=(w-text_w)/2"
     
+    # On ajoute un effet 'shake' (tremblement) aléatoire sur le texte du milieu
+    shake_y = "y=h/2+(5*sin(t*50))" 
+
     cmd_final = (
-        f"ffmpeg -y -f concat -i list.txt -vf "
-        f"\"drawtext=text='{ai['h']}':{draw}:fontsize=110:fontcolor=white:y=250:enable='between(t,0,4)', "
-        f"drawtext=text='{ai['m']}':{draw}:fontsize=85:fontcolor={ai['c']}:y=h/2:enable='between(t,5,12)', "
-        f"drawtext=text='IDENTIFIE UN POTE':{draw}:fontsize=70:fontcolor=white:y=h/2+150:enable='between(t,14,19)', "
-        f"drawtext=text='LIKE ET ABONNE-TOI':{draw}:fontsize=80:fontcolor=yellow:y=h-300:enable='between(t,20,25)'\" "
+        f"ffmpeg -y -i tmp.mp4 -vf "
+        f"\"drawtext=text='{ai['h']}':{draw}:fontsize=110:fontcolor=white:y=200:enable='between(t,0,4)', "
+        f"drawtext=text='{ai['m']}':{draw}:fontsize=90:fontcolor={ai['c']}:{shake_y}:enable='between(t,6,12)', "
+        f"drawtext=text='LIKE ET COMMENTE':{draw}:fontsize=75:fontcolor=yellow:y=h-450:enable='between(t,15,20)', "
+        f"drawtext=text='{ai['p']}':{draw}:fontsize=80:fontcolor=white:y=h-250:enable='between(t,21,25)'\" "
         f"-c:v libx264 -crf 18 -pix_fmt yuv420p output.mp4"
     )
     
     run(cmd_final)
-    if os.path.exists("output.mp4"): print("✅ Rendu Viral Terminé")
+    if os.path.exists("output.mp4"): print("✅ RENDU VIRAL RÉUSSI")
 
 if __name__ == "__main__":
     start()
