@@ -1,59 +1,59 @@
 import json, base64, os, subprocess, urllib.request, time
 
-# CONFIGURATION ÉMOTIONNELLE
-CFG = {"hook_dur": 3.5, "punch_dur": 4.5, "res": "720x1280", "fps": 24}
+# CONFIGURATION STRICTE
+CFG = {"hook_dur": 3.0, "punch_dur": 4.0, "fps": 24}
 FONT = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 
 def run(cmd):
-    print(f"  ▸ Exécution...")
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    if r.returncode != 0: print(f"  ❌ Erreur: {r.stderr[:200]}")
-    return r
+    print(f"  ▸ Exécution FFmpeg...")
+    return subprocess.run(cmd, shell=True, capture_output=True, text=True)
 
 def start():
     if not os.path.exists('p.json'): return
     with open('p.json') as f: data = json.load(f)
     
-    # 1. Extraction des vidéos
+    # 1. Extraction des vidéos (On décode les fichiers envoyés par l'App)
     clips = []
     for i, v in enumerate(data.get('videos', [])):
         p = f"raw_{i}.mp4"
         with open(p, "wb") as f: f.write(base64.b64decode(v['data']))
         clips.append(p)
     
-    # 2. Création des segments verticaux (Plus robuste)
-    # On force l'encodage audio en AAC même si c'est du silence pour éviter les erreurs de mapping
-    vf = "scale=ih*9/16:ih,crop=h*9/16:h,scale=720:1280,setsar=1"
-    
-    print("[1/3] Préparation des clips...")
-    run(f'ffmpeg -y -i {clips[0]} -t {CFG["hook_dur"]} -vf "{vf}" -r {CFG["fps"]} -c:v libx264 -c:a aac -ar 44100 s0.mp4')
-    run(f'ffmpeg -y -i {clips[-1]} -t {CFG["punch_dur"]} -vf "{vf}" -r {CFG["fps"]} -c:v libx264 -c:a aac -ar 44100 s1.mp4')
+    if len(clips) < 2: 
+        print("❌ Erreur: Pas assez de vidéos dans p.json"); return
 
-    # 3. Assemblage Final avec Textes (Sans Zoompan complexe pour l'instant)
-    # Le Zoompan est remplacé par un scale dynamique plus stable
-    print("[2/3] Montage final...")
+    # 2. Création des segments verticaux (Cadrage 9:16 forcé)
+    # On utilise un filtre simple de redimensionnement et de remplissage (pad) 
+    # pour éviter les erreurs de calcul de pixels
+    vf_vertical = "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1"
     
-    # Texte : On simplifie pour éviter les erreurs de parsing
-    h_txt = "ATTENDS LA FIN"
-    p_txt = "ABONNE TOI"
+    print("[1/2] Normalisation des clips...")
+    # On crée s0.mp4 et s1.mp4 avec une piste audio AAC forcée
+    run(f'ffmpeg -y -i {clips[0]} -t {CFG["hook_dur"]} -vf "{vf_vertical}" -r {CFG["fps"]} -c:v libx264 -pix_fmt yuv420p -c:a aac -ac 2 -ar 44100 s0.mp4')
+    run(f'ffmpeg -y -i {clips[-1]} -t {CFG["punch_dur"]} -vf "{vf_vertical}" -r {CFG["fps"]} -c:v libx264 -pix_fmt yuv420p -c:a aac -ac 2 -ar 44100 s1.mp4')
+
+    # 3. Assemblage Final (Méthode la plus stable au monde : concat demuxer)
+    print("[2/2] Assemblage final et textes...")
     
+    # Création du fichier de liste pour FFmpeg
+    with open("list.txt", "w") as f:
+        f.write("file 's0.mp4'\nfile 's1.mp4'")
+
+    # Commande finale avec les textes
+    # On ajoute des bordures noires au texte pour qu'il soit lisible partout
     cmd_final = (
-        f"ffmpeg -y -i s0.mp4 -i s1.mp4 -filter_complex "
-        f"\"[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]; "
-        f"[v]drawtext=text='{h_txt}':fontfile={FONT}:fontsize=80:fontcolor=white:borderw=5:x=(w-text_w)/2:y=200:enable='between(t,0,3)', "
-        f"drawtext=text='{p_txt}':fontfile={FONT}:fontsize=70:fontcolor=yellow:borderw=5:x=(w-text_w)/2:y=h-300:enable='between(t,3,10)'\" "
-        f"-map \"[v]\" -map \"[a]\" -c:v libx264 -crf 18 -pix_fmt yuv420p output.mp4"
+        f"ffmpeg -y -f concat -i list.txt -vf "
+        f"\"drawtext=text='ATTENDS LA FIN':fontfile={FONT}:fontsize=80:fontcolor=white:borderw=4:bordercolor=black:x=(w-text_w)/2:y=200:enable='between(t,0,3)', "
+        f"drawtext=text='INCROYABLE':fontfile={FONT}:fontsize=70:fontcolor=yellow:borderw=4:bordercolor=black:x=(w-text_w)/2:y=h-300:enable='between(t,3,10)'\" "
+        f"-c:v libx264 -crf 18 -c:a aac -pix_fmt yuv420p output.mp4"
     )
     
-    run(cmd_final)
+    result = run(cmd_final)
 
-    # 4. Vérification finale
     if os.path.exists("output.mp4"):
-        print("✅ SUCCESS: output.mp4 est prêt.")
+        print("✅ SUCCESS: output.mp4 généré.")
     else:
-        # ULTIME SECOURS : Si le montage complexe échoue, on copie juste le premier clip
-        print("⚠ Fallback: Création d'une version simplifiée...")
-        run(f'ffmpeg -y -i {clips[0]} -t 5 -vf "{vf}" -c:v libx264 -pix_fmt yuv420p output.mp4')
+        print(f"❌ FFmpeg a échoué. Log d'erreur: {result.stderr}")
 
 if __name__ == "__main__":
     start()
