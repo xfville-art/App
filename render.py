@@ -1,47 +1,33 @@
 """
-render.py — ViraCut v3
-Pipeline intelligent : analyse IA multi-frames → narrative → effets adaptés
+render.py — ViraCut Les Crados v4
+Pipeline : extraction → analyse → IA (vision + textes) → montage → textes viraux
 """
-import json, base64, os, subprocess, urllib.request, urllib.error, time
+import json, base64, os, subprocess, urllib.request, time, hashlib, random
 
 # ─────────────────────────────────────────────────────────────────────
-#  CONFIG (overridable depuis p.json options)
+#  CONFIG
 # ─────────────────────────────────────────────────────────────────────
 CFG = {
-    "hook_dur":    2.0,
-    "core_dur":    2.5,
-    "punch_dur":   3.0,
-    "tolerance":   0.7,
-    "flash_cut":   True,
-    "zoom_punch":  True,
-    "zoom_scale":  1.08,
-    "ai_text":     True,
-    "auto_order":  True,
-    "custom_hook":  "",
-    "custom_punch": "",
-    "resolution":  "720x1280",
-    "fps":         24,
-    "crf":         18,
-    "audio_br":    192,
-    "fade_dur":    0.3,
-    "scdet_thr":   10,
-    "hook_size":   86,
-    "punch_size":  62,
-    "text_bg":     False,
+    "hook_dur": 2.0, "core_dur": 2.5, "punch_dur": 3.0,
+    "tolerance": 0.7, "flash_cut": True, "zoom_punch": True,
+    "zoom_scale": 1.08, "ai_text": True, "auto_order": True,
+    "custom_hook": "", "custom_punch": "",
+    "resolution": "720x1280", "fps": 24, "crf": 18,
+    "audio_br": 192, "fade_dur": 0.3, "scdet_thr": 10,
+    "hook_size": 88, "punch_size": 64, "text_bg": False,
 }
 
 FONT    = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 # ─────────────────────────────────────────────────────────────────────
-#  UTILS FFMPEG
+#  UTILS
 # ─────────────────────────────────────────────────────────────────────
 def run(cmd, silent=False):
-    if not silent:
-        print(f"  ▸ {cmd[:100]}")
+    if not silent: print(f"  ▸ {cmd[:110]}")
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     if r.returncode != 0 and not silent:
-        print(f"    ✗ {r.stderr[-200:]}")
+        print(f"    ✗ {r.stderr[-300:]}")
     return r
 
 def probe(path, fmt="format"):
@@ -59,8 +45,8 @@ def get_dimensions(path):
             return int(s['width']), int(s['height'])
     return int(W), int(H)
 
-def get_scene_changes(path, threshold=None):
-    thr = threshold or CFG["scdet_thr"]
+def get_scene_changes(path):
+    thr = CFG["scdet_thr"]
     r = run(f'ffprobe -v quiet -show_frames '
             f'-f lavfi "movie={path},scdet=threshold={thr}" '
             f'-print_format json', silent=True)
@@ -72,132 +58,66 @@ def get_scene_changes(path, threshold=None):
             if score > 0 and pts > 0.2:
                 changes.append((pts, score))
     except: pass
-    return sorted(changes, key=lambda x: x[0])
+    return sorted(changes)
 
 def get_audio_rms(path):
-    """Mesure le niveau audio moyen — proxy pour intensité/énergie du clip."""
     r = run(f'ffprobe -v quiet -f lavfi -i "amovie={path},astats=metadata=1:reset=1" '
-            f'-show_entries frame_tags=lavfi.astats.Overall.RMS_level '
-            f'-of csv=p=0', silent=True)
-    vals = []
-    for line in r.stdout.strip().split('\n'):
-        try:
-            v = float(line)
-            if v > -100:
-                vals.append(v)
-        except: pass
-    return sum(vals) / len(vals) if vals else -60.0
+            f'-show_entries frame_tags=lavfi.astats.Overall.RMS_level -of csv=p=0', silent=True)
+    vals = [float(l) for l in r.stdout.strip().split('\n') if l.strip() and float(l) > -100]
+    return sum(vals)/len(vals) if vals else -60.0
 
 def get_motion_score(path, duration):
-    """Score de mouvement via différence de frames (PSNR inversé)."""
     r = run(f'ffprobe -v quiet -f lavfi '
             f'-i "movie={path},fps=4,split[a][b];[a][b]psnr" '
-            f'-show_entries frame_tags=lavfi.psnr.mse_avg '
-            f'-of csv=p=0 -t {min(duration, 4.0)}', silent=True)
-    vals = []
-    for line in r.stdout.strip().split('\n'):
-        try:
-            v = float(line)
-            if 0 < v < 9999:
-                vals.append(v)
-        except: pass
-    return sum(vals) / len(vals) if vals else 0.0
+            f'-show_entries frame_tags=lavfi.psnr.mse_avg -of csv=p=0 -t {min(duration,4.0)}', silent=True)
+    vals = [float(l) for l in r.stdout.strip().split('\n') if l.strip() and 0 < float(l) < 9999]
+    return sum(vals)/len(vals) if vals else 0.0
 
 # ─────────────────────────────────────────────────────────────────────
-#  ANALYSE DE CLIP
+#  ANALYSE CLIP
 # ─────────────────────────────────────────────────────────────────────
 def analyze_clip(path, idx):
-    """Collecte toutes les métriques d'un clip."""
-    dur       = get_duration(path)
-    w, h      = get_dimensions(path)
-    changes   = get_scene_changes(path)
-    rms       = get_audio_rms(path)
-    motion    = get_motion_score(path, dur)
-
-    # Score d'énergie composite
-    scene_density  = len(changes) / max(dur, 0.1)
-    early_changes  = sum(1 for t, s in changes if t <= 2.0)
-    late_changes   = sum(1 for t, s in changes if t >= dur * 0.6)
-    peak_score     = max((s for t, s in changes), default=0)
-
+    dur     = get_duration(path)
+    w, h    = get_dimensions(path)
+    changes = get_scene_changes(path)
+    rms     = get_audio_rms(path)
+    motion  = get_motion_score(path, dur)
     return {
-        "path":           path,
-        "idx":            idx,
-        "duration":       dur,
-        "width":          w,
-        "height":         h,
-        "changes":        changes,
-        "rms":            rms,
-        "motion":         motion,
-        "scene_density":  scene_density,
-        "early_changes":  early_changes,
-        "late_changes":   late_changes,
-        "peak_score":     peak_score,
+        "path": path, "idx": idx, "duration": dur,
+        "width": w, "height": h, "changes": changes,
+        "rms": rms, "motion": motion,
+        "early": sum(1 for t,s in changes if t <= 2.0),
+        "late":  sum(1 for t,s in changes if t >= dur*0.6),
+        "peak":  max((s for t,s in changes), default=0),
+        "density": len(changes) / max(dur, 0.1),
     }
 
 def score_roles(clips_data):
-    """
-    Attribue les rôles hook/core/punchline selon un scoring multidimensionnel.
-    Hook     = beaucoup d'activité tôt + fort impact visuel (peak_score élevé)
-    Core     = densité scène moyenne + mouvement soutenu
-    Punchline = fin forte + audio fort + activité tardive
-    """
     n = len(clips_data)
-    if n == 1:
-        return [("hook_core_punch", clips_data[0])]
+    if n == 1: return [("hook_core_punch", clips_data[0])]
     if n == 2:
-        # Le plus dynamique en premier
-        s0 = clips_data[0]["early_changes"] * 10 + clips_data[0]["peak_score"]
-        s1 = clips_data[1]["early_changes"] * 10 + clips_data[1]["peak_score"]
-        if s0 >= s1:
-            return [("hook", clips_data[0]), ("punch", clips_data[1])]
-        else:
-            return [("hook", clips_data[1]), ("punch", clips_data[0])]
-
-    # 3+ clips : scoring 3D
-    def hook_score(c):
-        return (c["early_changes"] * 12
-                + c["peak_score"] * 2
-                + c["motion"] * 0.5
-                - c["duration"] * 0.5)
-
-    def punch_score(c):
-        return (c["late_changes"] * 12
-                + (c["rms"] + 60) * 0.8   # audio plus fort = punchline
-                + c["peak_score"]
-                - c["scene_density"] * 2)
-
-    def core_score(c):
-        return (c["scene_density"] * 8
-                + c["motion"] * 0.8
-                + c["duration"] * 0.5)
-
-    hooks   = sorted(clips_data, key=hook_score, reverse=True)
-    hook_c  = hooks[0]
+        s0 = clips_data[0]["early"]*12 + clips_data[0]["peak"]
+        s1 = clips_data[1]["early"]*12 + clips_data[1]["peak"]
+        return [("hook", clips_data[0 if s0>=s1 else 1]),
+                ("punch", clips_data[1 if s0>=s1 else 0])]
+    def hs(c): return c["early"]*12 + c["peak"]*2 + c["motion"]*0.5 - c["duration"]*0.5
+    def ps(c): return c["late"]*12 + (c["rms"]+60)*0.8 + c["peak"] - c["density"]*2
+    hook_c  = max(clips_data, key=hs)
     rem     = [c for c in clips_data if c["idx"] != hook_c["idx"]]
-    punch_c = max(rem, key=punch_score)
+    punch_c = max(rem, key=ps)
     cores   = [c for c in rem if c["idx"] != punch_c["idx"]]
-    # S'il y a plusieurs cores, prendre celui avec le meilleur score core
-    if len(cores) > 1:
-        cores = sorted(cores, key=core_score, reverse=True)
-
-    result = [("hook", hook_c)] + [("core", c) for c in cores] + [("punch", punch_c)]
-
+    result  = [("hook", hook_c)] + [("core", c) for c in cores] + [("punch", punch_c)]
     for role, c in result:
-        print(f"  ✓ r{c['idx']} → {role.upper():8s} "
-              f"(motion={c['motion']:.1f} rms={c['rms']:.0f}dB "
-              f"early={c['early_changes']} late={c['late_changes']})")
+        print(f"  r{c['idx']} → {role.upper():8} motion={c['motion']:.1f} rms={c['rms']:.0f}dB")
     return result
 
 # ─────────────────────────────────────────────────────────────────────
-#  IA — ANALYSE VISION MULTI-FRAMES
+#  IA — VISION + TEXTES
 # ─────────────────────────────────────────────────────────────────────
-def extract_frames_b64(path, n_frames=3):
-    """Extrait n frames réparties sur le clip (début, milieu, fin)."""
-    dur    = get_duration(path)
+def extract_frames_b64(path, n=3):
+    dur = get_duration(path)
     frames = []
-    times  = [dur * 0.1, dur * 0.5, dur * 0.85][:n_frames]
-    for i, t in enumerate(times):
+    for i, t in enumerate([dur*0.08, dur*0.45, dur*0.82][:n]):
         out = f"{path}_f{i}.jpg"
         run(f'ffmpeg -y -ss {t:.3f} -i "{path}" -vframes 1 -q:v 2 "{out}"', silent=True)
         if os.path.exists(out):
@@ -206,329 +126,267 @@ def extract_frames_b64(path, n_frames=3):
     return frames
 
 def call_claude(messages, max_tokens=600, system=None):
-    """Appel API Anthropic avec retry."""
-    payload = {
-        "model": "claude-sonnet-4-20250514",
-        "max_tokens": max_tokens,
-        "messages": messages,
-    }
-    if system:
-        payload["system"] = system
-
+    payload = {"model": "claude-sonnet-4-20250514", "max_tokens": max_tokens, "messages": messages}
+    if system: payload["system"] = system
     for attempt in range(2):
         try:
             req = urllib.request.Request(
                 "https://api.anthropic.com/v1/messages",
                 data=json.dumps(payload).encode(),
-                headers={
-                    "Content-Type": "application/json",
-                    "x-api-key": API_KEY,
-                    "anthropic-version": "2023-06-01"
-                }
-            )
+                headers={"Content-Type":"application/json",
+                         "x-api-key": API_KEY,
+                         "anthropic-version":"2023-06-01"})
             with urllib.request.urlopen(req, timeout=45) as resp:
                 data = json.loads(resp.read())
-            text = data["content"][0]["text"].strip()
-            text = text.replace("```json", "").replace("```", "").strip()
+            text = data["content"][0]["text"].strip().replace("```json","").replace("```","").strip()
             return text
         except Exception as e:
-            print(f"  ⚠ Tentative {attempt+1} échouée : {e}")
+            print(f"  ⚠ API attempt {attempt+1}: {e}")
             if attempt == 0: time.sleep(2)
     return None
 
-def ai_analyze_clips(clips_data, roles_order):
-    """
-    Étape 1 : Claude analyse visuellement chaque clip.
-    Retourne une description narrative par clip.
-    """
-    if not API_KEY:
-        return None
-
-    print("\n  [IA] Analyse visuelle des clips...")
+def ai_analyze_and_generate(clips_data, roles_order, custom_hook="", custom_punch=""):
+    """Un seul appel IA : analyse visuelle + génération textes + noms de cartes."""
+    print("\n  [IA] Analyse + génération textes...")
     content = []
 
-    system = (
-        "Tu es un expert en montage TikTok viral spécialisé dans les contenus "
-        "humoristiques style Garbage Pail Kids / cartes animées absurdes. "
-        "Tu analyses des clips vidéo pour comprendre leur contenu visuel et émotionnel."
+    SYSTEM = (
+        "Tu es le copywriter de la chaine TikTok LES CRADOS — cartes a collectionner "
+        "humoristiques style Garbage Pail Kids version francaise. "
+        "Ton humour : absurde pince-sans-rire, noir leger, culture internet. "
+        "Tu lis les noms sur les cartes et tu t en inspires DIRECTEMENT. "
+        "REGLES ABSOLUES pour les textes : zero apostrophe, zero deux-points, "
+        "zero virgule, zero guillemets. Sinon FFmpeg plante."
     )
 
     for role, clip in roles_order:
-        frames = extract_frames_b64(clip["path"], n_frames=3)
-        if not frames:
-            continue
-        content.append({
-            "type": "text",
-            "text": f"\n--- Clip '{role.upper()}' (r{clip['idx']}) ---"
-        })
+        frames = extract_frames_b64(clip["path"])
+        if not frames: continue
+        content.append({"type":"text","text":f"\n--- Clip {role.upper()} ---"})
         for j, b64 in enumerate(frames):
-            label = ["début", "milieu", "fin"][j]
-            content.append({"type": "text", "text": f"Frame {label} :"})
-            content.append({
-                "type": "image",
-                "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}
-            })
-
-    content.append({
-        "type": "text",
-        "text": (
-            "\nPour chaque clip, décris en 1-2 phrases :\n"
-            "- Ce qu'on voit visuellement (personnage, action, ambiance)\n"
-            "- Le registre émotionnel (WTF, drôle, choc, absurde, cool)\n"
-            "- Un mot-clé thématique\n\n"
-            "Réponds UNIQUEMENT en JSON strict :\n"
-            '{"clips": [{"role":"hook","description":"...","emotion":"...","theme":"..."}, ...]}'
-        )
-    })
-
-    result = call_claude([{"role": "user", "content": content}], max_tokens=500, system=system)
-    if not result:
-        return None
-
-    try:
-        data = json.loads(result)
-        return data.get("clips", [])
-    except:
-        print(f"  ⚠ Parse analyse échoué")
-        return None
-
-
-def ai_generate_texts(clips_analysis, roles_order, custom_hook="", custom_punch=""):
-    """
-    Étape 2 : génère les textes sur la base de l'analyse visuelle.
-    Produit hook + texte core (optionnel) + punchline cohérents narrativement.
-    """
-    if not API_KEY:
-        return _default_texts(custom_hook, custom_punch)
-
-    print("\n  [IA] Génération des textes narratifs...")
-
-    # Construire le contexte narratif depuis l'analyse
-    context_parts = []
-    for role, clip in roles_order:
-        desc = ""
-        if clips_analysis:
-            for c in clips_analysis:
-                if c.get("role") == role:
-                    desc = f" — {c.get('description','')} (émotion: {c.get('emotion','')})"
-                    break
-        context_parts.append(f"• {role.upper()}{desc}")
-
-    context = "\n".join(context_parts)
+            content.append({"type":"text","text":f"Frame {['debut','milieu','fin'][j]}:"})
+            content.append({"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":b64}})
 
     constraints = []
-    if custom_hook:
-        constraints.append(f"HOOK imposé (utilise tel quel) : \"{custom_hook}\"")
-    if custom_punch:
-        constraints.append(f"PUNCHLINE imposée : \"{custom_punch}\"")
+    if custom_hook:  constraints.append(f"HOOK impose : \"{custom_hook}\"")
+    if custom_punch: constraints.append(f"PUNCHLINE imposee : \"{custom_punch}\"")
+    c_txt = "\n".join(constraints) if constraints else "Aucune contrainte."
 
-    constraint_txt = "\n".join(constraints) if constraints else "Aucune contrainte imposée."
+    content.append({"type":"text","text":(
+        f"\nContraintes : {c_txt}\n\n"
+        "ETAPE 1 — Lis les noms sur les cartes (ex: JEROME GASTRONOME, SADIQUE ERIC, etc)\n"
+        "ETAPE 2 — Genere 3 textes qui UTILISENT ces noms ou s en inspirent directement.\n\n"
+        "1. HOOK (2 a 4 mots, TOUT EN MAJUSCULES) :\n"
+        "   → Choc immédiat. Exemples avec noms : 'JEROME FAIT QUOI', 'NON MAIS JEROME', "
+        "'SADIQUE ERIC ENCORE', 'ATTENDS JEROME'\n"
+        "   → OU sans nom : 'ATTENDS QUOI', 'NON MAIS LA', 'CA EXISTE VRAIMENT'\n\n"
+        "2. CORE_TEXT (3 a 5 mots, peut etre vide '') :\n"
+        "   → Commentaire pince-sans-rire sur l action. Peut integrer le nom.\n"
+        "   → Ex: 'Jerome approuve', 'Crado certifie', 'Situation normale'\n\n"
+        "3. PUNCHLINE (5 a 8 mots + 1 emoji possible) :\n"
+        "   → Chute absurde. Peut utiliser le nom. Ex: 'Jerome fait ca depuis des annees 💀'\n"
+        "   → Ou sans nom : 'Note de vie 0 sur 10 🗑'\n\n"
+        "Hook → Core → Punchline forment une micro-histoire drole.\n\n"
+        "Reponds UNIQUEMENT JSON strict sans markdown :\n"
+        "{\"card_names\":[\"nom1\",\"nom2\"],\"hook\":\"TEXTE\",\"core_text\":\"Texte\",\"punchline\":\"Texte\"}"
+    )})
 
-    prompt = (
-        f"Contenu des clips dans l'ordre du montage :\n{context}\n\n"
-        f"Contraintes : {constraint_txt}\n\n"
-        "Génère 3 textes pour cette vidéo TikTok :\n\n"
-        "1. HOOK (affiché 0→2.5s, en haut) :\n"
-        "   - Max 4 mots, MAJUSCULES\n"
-        "   - Choc / WTF / question intrigante\n"
-        "   - Doit donner envie de continuer à regarder\n"
-        "   - Pas d'apostrophe, pas de deux-points\n\n"
-        "2. CORE_TEXT (affiché au milieu, 2.5s→5s, au centre) :\n"
-        "   - Max 5 mots, style caption TikTok\n"
-        "   - Commente l'action en cours avec humour décalé\n"
-        "   - Pas d'apostrophe, pas de deux-points\n\n"
-        "3. PUNCHLINE (affiché fin, en bas) :\n"
-        "   - Max 6 mots, humour absurde/décalé\n"
-        "   - Doit créer une chute narrative par rapport au hook\n"
-        "   - Peut finir par UN emoji simple\n"
-        "   - Pas d'apostrophe, pas de deux-points\n\n"
-        "IMPORTANT : les 3 textes doivent former une micro-narration cohérente.\n"
-        "Hook pose une question/tension → Core commente → Punchline résout de façon absurde.\n\n"
-        "Réponds UNIQUEMENT en JSON strict :\n"
-        '{"hook":"TEXTE","core_text":"Texte","punchline":"Texte emoji"}'
-    )
-
-    result = call_claude(
-        [{"role": "user", "content": prompt}],
-        max_tokens=300,
-        system=(
-            "Tu es un copywriter expert TikTok viral pour une chaîne humoristique "
-            "de cartes animées style Garbage Pail Kids française. "
-            "Ton style : absurde, décalé, culture internet, humour noir léger. "
-            "Jamais banal, jamais générique."
-        )
-    )
-
-    if not result:
-        return _default_texts(custom_hook, custom_punch)
+    result = call_claude([{"role":"user","content":content}], max_tokens=400, system=SYSTEM)
+    if not result: return None
 
     try:
         data = json.loads(result)
-        clean = lambda s: s.replace("'", " ").replace(":", " ").replace('"', ' ').strip()
-        hook       = clean(custom_hook  if custom_hook  else data.get("hook", "TAS VU CA"))
-        core_text  = clean(data.get("core_text", ""))
-        punchline  = clean(custom_punch if custom_punch else data.get("punchline", "Impossible de pas rire"))
-        print(f"  ✓ Hook       : {hook}")
-        print(f"  ✓ Core text  : {core_text}")
-        print(f"  ✓ Punchline  : {punchline}")
-        return hook, core_text, punchline
+        clean = lambda s: (s.replace("'","").replace(":"," ").replace('"',' ')
+                            .replace(",","").replace("  "," ")
+                            # supprimer emojis (Liberation ne les supporte pas)
+                            .encode('ascii','ignore').decode('ascii').strip())
+        hook      = clean(custom_hook  if custom_hook  else data.get("hook",""))
+        core      = clean(data.get("core_text",""))
+        punchline = clean(custom_punch if custom_punch else data.get("punchline",""))
+        names     = data.get("card_names", [])
+        print(f"  ✓ Cartes lues : {names}")
+        print(f"  ✓ Hook        : {hook}")
+        print(f"  ✓ Core        : {core}")
+        print(f"  ✓ Punchline   : {punchline}")
+        return hook, core, punchline, names
     except Exception as e:
-        print(f"  ⚠ Parse textes échoué ({e})")
-        return _default_texts(custom_hook, custom_punch)
+        print(f"  ⚠ Parse echoue ({e}) — raw: {result[:100]}")
+        return None
 
+def smart_fallback(custom_hook="", custom_punch="", seed=""):
+    """Pool de textes percutants style Les Crados — utilisé sans API."""
+    HOOKS = [
+        "ATTENDS QUOI","NON MAIS LA","CA EXISTE VRAIMENT","T AS VU CA",
+        "MAIS QUI A FAIT CA","REGARDE MOI CA","TROP CRADE","IL EST FOU CE GARS",
+        "SCANDALE TOTAL","GAME OVER","WTF ABSOLU","INTERDIT AUX FRAGILES",
+        "NIVEAU ULTIME","ON EST D ACCORD",
+    ]
+    PUNCHES = [
+        "Les Crados frappent encore",
+        "Y a vraiment pas de mots",
+        "Ma mere elle sait pas que je regarde ca",
+        "Note de vie 0 sur 10",
+        "Certifie degoutant",
+        "La honte du quartier",
+        "Science sans conscience etc",
+        "Quelqu un a valide ca srsly",
+        "Chef-d oeuvre ou crime je sais pas",
+        "Pas vu ca depuis le bahut",
+        "Talent gache au service du chaos",
+        "Magistral dans le genre horrible",
+        "On lui a rien demande mais bon",
+        "Interdit aux moins de 30 ans",
+    ]
+    CORES = ["La carte qui tue","Crado certifie","Niveau max atteint",
+             "Situation normale","Comme d hab","","",""]
 
-def _default_texts(custom_hook="", custom_punch=""):
-    hook = custom_hook.replace("'", " ").replace(":", " ") if custom_hook else "TAS VU CA"
-    pl   = custom_punch.replace("'", " ").replace(":", " ") if custom_punch else "Impossible de pas rire"
-    return hook, "", pl
+    rng = random.Random(int(hashlib.md5(seed.encode()).hexdigest()[:8],16))
+    h = custom_hook.replace("'","").replace(":"," ") if custom_hook else rng.choice(HOOKS)
+    p = custom_punch.replace("'","").replace(":"," ") if custom_punch else rng.choice(PUNCHES)
+    c = rng.choice(CORES)
+    return h, c, p
 
 # ─────────────────────────────────────────────────────────────────────
-#  FILTRES VIDÉO
+#  TEXTES ANIMÉS — STYLE TIKTOK VIRAL
 # ─────────────────────────────────────────────────────────────────────
-def make_vf(src_w, src_h):
-    W, H = [int(x) for x in CFG["resolution"].split("x")]
-    fps  = CFG["fps"]
-    src_ratio = src_w / src_h
-    if src_ratio <= W / H + 0.05:
-        return (f"scale={W}:{H}:force_original_aspect_ratio=increase,"
-                f"crop={W}:{H},setsar=1,fps={fps}")
-    else:
-        scaled_h = int(src_h * W / src_w)
-        if scaled_h % 2 != 0: scaled_h -= 1
-        pad_y = (H - scaled_h) // 2
-        return (f"scale={W}:{scaled_h},"
-                f"pad={W}:{H}:0:{pad_y}:black,"
-                f"setsar=1,fps={fps}")
+def dynamic_fontsize(text, base_sz, max_w, char_ratio=0.58):
+    """Réduit la police si le texte dépasse max_w pixels."""
+    estimated = len(text) * base_sz * char_ratio
+    if estimated > max_w:
+        return max(36, int(base_sz * max_w / estimated))
+    return base_sz
 
-# ─────────────────────────────────────────────────────────────────────
-#  TEXTES ANIMÉS — 3 NIVEAUX
-# ─────────────────────────────────────────────────────────────────────
 def write_text_filter(hook, core_text, punchline, total_dur):
     """
-    3 couches de texte avec animations distinctes :
-    - Hook     : slide depuis le haut, visible 0→2.5s, blanc bold
-    - Core     : apparition scale depuis centre, visible 2.5s→5s, blanc semi-transparent
-    - Punchline: slide depuis le bas, visible (total-2.8)→fin, jaune bold
+    Animations TikTok virales :
+    - HOOK     : POP depuis 0 + bounce + ROUGE #FF2D55 + shadow forte
+    - CORE     : slide depuis droite + blanc + ombre
+    - PUNCHLINE: bounce depuis bas + shake final + JAUNE FLUO #FFE600
     """
-    W, H   = [int(x) for x in CFG["resolution"].split("x")]
-    fps    = CFG["fps"]
-    h_sz   = CFG["hook_size"]
-    p_sz   = CFG["punch_size"]
-    c_sz   = max(42, p_sz - 12)
-
-    # ── timings ──────────────────────────────
-    hook_in    = 0.0
-    hook_slide = 0.25
-    hook_hold  = 2.2
-    hook_out   = 2.5
-
-    core_in    = 2.5
-    core_slide = 2.75
-    core_hold  = min(5.0, total_dur - 2.5)
-    core_out   = min(5.3, total_dur - 2.2)
-
-    pl_in      = max(0.0, total_dur - 2.8)
-    pl_slide   = pl_in + 0.25
-    pl_out     = total_dur
-
-    # ── positions y ──────────────────────────
-    # Zone image (avec padding haut/bas = 160px chacun si ratio < 9:16)
-    img_top    = 170   # safe area haut
-    img_bottom = H - 170  # safe area bas
-
-    hook_y_final   = img_top + 10
-    hook_y_start   = hook_y_final - 120
-    pl_y_final     = img_bottom - p_sz - 10
-    pl_y_start     = pl_y_final + 120
-    core_y         = H // 2 - c_sz // 2
+    W, H  = [int(x) for x in CFG["resolution"].split("x")]
+    # Tailles adaptées à la longueur du texte (max 92% de la largeur)
+    max_w = int(W * 0.92)
+    h_sz  = dynamic_fontsize(hook,      CFG["hook_size"],  max_w)
+    p_sz  = dynamic_fontsize(punchline, CFG["punch_size"], max_w)
+    c_sz  = dynamic_fontsize(core_text, max(48, CFG["punch_size"]-10), max_w) if core_text else 48
 
     def ft(t): return f"{t:.3f}"
 
-    # ── HOOK ─────────────────────────────────
-    hook_y = (
-        f"if(lt(t\\,{ft(hook_slide)})\\,"
-        f"{hook_y_start}+(t-{ft(hook_in)})*{int((hook_y_final-hook_y_start)/max(hook_slide-hook_in,0.01))}\\,"
-        f"{hook_y_final})"
+    # zones safe (au-dessus du nom de carte en bas)
+    hook_y  = 115
+    pl_y    = H - 145 - p_sz
+    core_y  = H // 2 - c_sz // 2
+
+    # timings
+    h_pop   = 0.15
+    h_hold  = 2.0
+    h_out   = 2.5
+
+    ci      = 2.6
+    cs      = 2.85
+    ch      = min(4.8, total_dur - 2.6)
+    co      = min(5.1, total_dur - 2.3)
+
+    pi      = max(0.0, total_dur - 2.8)
+    pb      = pi + 0.20
+    psh     = max(pb, total_dur - 0.55)
+    po      = total_dur
+
+    # ── HOOK : pop bounce depuis le haut ──────────────────────────
+    h_y = (
+        f"if(lt(t\\,{ft(h_pop)})\\,"
+        # pop depuis hook_y-50 vers hook_y
+        f"{hook_y-50}+(t/{ft(max(h_pop,0.01))})*50\\,"
+        f"{hook_y})"
     )
-    hook_alpha = (
-        f"if(lt(t\\,{ft(hook_slide)})\\,(t-{ft(hook_in)})/{ft(max(hook_slide-hook_in,0.01))}\\,"
-        f"if(lt(t\\,{ft(hook_hold)})\\,1\\,"
-        f"max(0\\,({ft(hook_out)}-t)/{ft(max(hook_out-hook_hold,0.01))}))"
+    h_alpha = (
+        f"if(lt(t\\,{ft(h_pop)})\\,t/{ft(max(h_pop,0.01))}\\,"
+        f"if(lt(t\\,{ft(h_hold)})\\,1\\,"
+        f"max(0\\,({ft(h_out)}-t)/{ft(max(h_out-h_hold,0.01))}))"
         f")"
     )
-    hook_filter = (
+    hook_f = (
         f"drawtext=text='{hook}':"
         f"fontfile={FONT}:fontsize={h_sz}:"
-        f"fontcolor=white:borderw=8:bordercolor=black:"
-        f"x=(w-text_w)/2:y={hook_y}:"
-        f"alpha='{hook_alpha}':"
-        f"enable='between(t\\,{ft(hook_in)}\\,{ft(hook_out)})'"
+        f"fontcolor=#FF2D55:borderw=10:bordercolor=black@0.9:"
+        f"shadowx=5:shadowy=5:shadowcolor=black@0.8:"
+        f"x=(w-text_w)/2:y={h_y}:"
+        f"alpha='{h_alpha}':"
+        f"enable='between(t\\,0\\,{ft(h_out)})'"
     )
 
-    # ── CORE TEXT ────────────────────────────
-    core_filter = ""
+    # ── CORE : slide depuis la droite ─────────────────────────────
+    core_f = ""
     if core_text:
-        core_alpha = (
-            f"if(lt(t\\,{ft(core_slide)})\\,(t-{ft(core_in)})/{ft(max(core_slide-core_in,0.01))}\\,"
-            f"if(lt(t\\,{ft(core_hold)})\\,0.85\\,"
-            f"max(0\\,({ft(core_out)}-t)/{ft(max(core_out-core_hold,0.01))}))"
+        c_alpha = (
+            f"if(lt(t\\,{ft(cs)})\\,(t-{ft(ci)})/{ft(max(cs-ci,0.01))}\\,"
+            f"if(lt(t\\,{ft(ch)})\\,0.95\\,"
+            f"max(0\\,({ft(co)}-t)/{ft(max(co-ch,0.01))}))"
             f")"
         )
-        core_filter = (
+        # slide x de droite vers centre
+        c_x = (
+            f"if(lt(t\\,{ft(cs)})\\,"
+            f"w-(t-{ft(ci)})*w/{ft(max(cs-ci,0.01))}+(w-text_w)/2\\,"
+            f"(w-text_w)/2)"
+        )
+        core_f = (
             f",drawtext=text='{core_text}':"
             f"fontfile={FONT}:fontsize={c_sz}:"
-            f"fontcolor=white:borderw=5:bordercolor=black:"
-            f"x=(w-text_w)/2:y={core_y}:"
-            f"alpha='{core_alpha}':"
-            f"enable='between(t\\,{ft(core_in)}\\,{ft(core_out)})'"
+            f"fontcolor=white:borderw=7:bordercolor=black:"
+            f"shadowx=4:shadowy=4:shadowcolor=black@0.9:"
+            f"x={c_x}:y={core_y}:"
+            f"alpha='{c_alpha}':"
+            f"enable='between(t\\,{ft(ci)}\\,{ft(co)})'"
         )
 
-    # ── PUNCHLINE ────────────────────────────
+    # ── PUNCHLINE : bounce + shake ────────────────────────────────
+    pl_y_expr = (
+        f"if(lt(t\\,{ft(pb)})\\,"
+        # arrive depuis pl_y+90, overshoot puis settle
+        f"{pl_y+90}-(t-{ft(pi)})*110/{ft(max(pb-pi,0.01))}\\,"
+        f"if(lt(t\\,{ft(pb+0.1)})\\,"
+        f"{pl_y-20}+(t-{ft(pb)})*20/{ft(0.1)}\\,"
+        f"{pl_y}))"
+    )
+    pl_x = (
+        f"if(lt(t\\,{ft(psh)})\\,(w-text_w)/2\\,"
+        # shake ±10px à 70Hz
+        f"(w-text_w)/2+10*sin((t-{ft(psh)})*70))"
+    )
     pl_alpha = (
-        f"if(lt(t\\,{ft(pl_slide)})\\,(t-{ft(pl_in)})/{ft(max(pl_slide-pl_in,0.01))}\\,"
-        f"if(lt(t\\,{ft(pl_out-0.3)})\\,1\\,"
-        f"max(0\\,({ft(pl_out)}-t)/0.3))"
+        f"if(lt(t\\,{ft(pb)})\\,(t-{ft(pi)})/{ft(max(pb-pi,0.01))}\\,"
+        f"if(lt(t\\,{ft(po-0.2)})\\,1\\,"
+        f"max(0\\,({ft(po)}-t)/0.2))"
         f")"
     )
-    pl_y = (
-        f"if(lt(t\\,{ft(pl_slide)})\\,"
-        f"{pl_y_start}-(t-{ft(pl_in)})*{int((pl_y_start-pl_y_final)/max(pl_slide-pl_in,0.01))}\\,"
-        f"{pl_y_final})"
-    )
-    pl_filter = (
+    pl_f = (
         f",drawtext=text='{punchline}':"
         f"fontfile={FONT}:fontsize={p_sz}:"
-        f"fontcolor=yellow:borderw=7:bordercolor=black:"
-        f"x=(w-text_w)/2:y={pl_y}:"
+        f"fontcolor=#FFE600:borderw=9:bordercolor=black:"
+        f"shadowx=5:shadowy=5:shadowcolor=black@0.9:"
+        f"x={pl_x}:y={pl_y_expr}:"
         f"alpha='{pl_alpha}':"
-        f"enable='between(t\\,{ft(pl_in)}\\,{ft(pl_out)})'"
+        f"enable='between(t\\,{ft(pi)}\\,{ft(po)})'"
     )
 
-    # ── FOND SEMI-TRANSPARENT (optionnel) ────────────────────────
-    bg_filters = ""
+    # fond optionnel
+    bg = ""
     if CFG.get("text_bg"):
-        # Bande noire derrière le hook
-        bg_filters += (
-            f"drawbox=x=0:y={hook_y_final-8}:w=iw:h={h_sz+20}:"
-            f"color=black@0.45:t=fill:"
-            f"enable='between(t\\,{ft(hook_in)}\\,{ft(hook_out)})',"
-        )
-        # Bande noire derrière la punchline
-        bg_filters += (
-            f"drawbox=x=0:y={pl_y_final-8}:w=iw:h={p_sz+20}:"
-            f"color=black@0.45:t=fill:"
-            f"enable='between(t\\,{ft(pl_in)}\\,{ft(pl_out)})',"
+        pad = 14
+        bg = (
+            f"drawbox=x=0:y={hook_y-pad}:w=iw:h={h_sz+pad*2}:color=black@0.55:t=fill:"
+            f"enable='between(t\\,0\\,{ft(h_out)})',"
+            f"drawbox=x=0:y={pl_y-pad}:w=iw:h={p_sz+pad*2}:color=black@0.55:t=fill:"
+            f"enable='between(t\\,{ft(pi)}\\,{ft(po)})',"
         )
         if core_text:
-            bg_filters += (
-                f"drawbox=x=0:y={core_y-8}:w=iw:h={c_sz+20}:"
-                f"color=black@0.45:t=fill:"
-                f"enable='between(t\\,{ft(core_in)}\\,{ft(core_out)})',"
-            )
+            bg += (f"drawbox=x=0:y={core_y-pad}:w=iw:h={c_sz+pad*2}:color=black@0.55:t=fill:"
+                   f"enable='between(t\\,{ft(ci)}\\,{ft(co)})',")
 
-    full_filter = bg_filters + hook_filter + core_filter + pl_filter
+    full = bg + hook_f + core_f + pl_f
     with open("text_filter.txt", "w", encoding="utf-8") as f:
-        f.write(full_filter)
+        f.write(full)
 
 def apply_text_overlay(src, out, hook, core_text, punchline):
     dur = get_duration(src)
@@ -536,26 +394,33 @@ def apply_text_overlay(src, out, hook, core_text, punchline):
     r = run(f'ffmpeg -y -i "{src}" -filter_script:v text_filter.txt '
             f'-c:v libx264 -preset fast -crf {CFG["crf"]} -an -pix_fmt yuv420p "{out}"')
     if r.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) < 1000:
-        print("  ⚠ drawtext échoué — copie sans texte")
+        print("  ⚠ drawtext echoue — copie sans texte")
         run(f'cp "{src}" "{out}"', silent=True)
 
 # ─────────────────────────────────────────────────────────────────────
-#  TRANSITIONS
+#  EFFETS VIDÉO
 # ─────────────────────────────────────────────────────────────────────
+def make_vf(src_w, src_h):
+    W, H = [int(x) for x in CFG["resolution"].split("x")]
+    fps  = CFG["fps"]
+    if src_w/src_h <= W/H + 0.05:
+        return f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps={fps}"
+    sh = int(src_h * W / src_w); sh -= sh % 2
+    return f"scale={W}:{sh},pad={W}:{H}:0:{(H-sh)//2}:black,setsar=1,fps={fps}"
+
 def make_flash():
     W, H = [int(x) for x in CFG["resolution"].split("x")]
     run(f'ffmpeg -y -f lavfi -i "color=c=white:size={W}x{H}:rate={CFG["fps"]}" '
         f'-t 0.042 -vf "setsar=1" -c:v libx264 -pix_fmt yuv420p flash.mp4')
 
-def best_cut(changes, target, dur, tol=None):
-    tol = tol or CFG["tolerance"]
-    window = [(t, s) for t, s in changes if abs(t - target) <= tol]
+def best_cut(changes, target, dur):
+    window = [(t,s) for t,s in changes if abs(t-target) <= CFG["tolerance"]]
     if window:
         best = max(window, key=lambda x: x[1])
         print(f"  ✓ Cut naturel {best[0]:.3f}s (score {best[1]:.1f})")
         return best[0]
     safe = min(target, dur - 0.15)
-    print(f"  ≈ Coupe forcée à {safe:.3f}s")
+    print(f"  ≈ Coupe forcee {safe:.3f}s")
     return safe
 
 def trim_segment(src, out, duration, vf):
@@ -563,50 +428,30 @@ def trim_segment(src, out, duration, vf):
         f'-c:v libx264 -preset fast -crf {CFG["crf"]} -an -pix_fmt yuv420p "{out}"')
 
 def apply_zoom_punch(src, out, punch_t):
-    """Zoom punch élaboré : accélération non-linéaire + retour élastique."""
-    fps        = CFG["fps"]
-    scale      = CFG["zoom_scale"]
-    pf         = int(punch_t * fps)
-    zi, zo     = 3, 8   # frames in / out
+    fps = CFG["fps"]; scale = CFG["zoom_scale"]
+    pf  = int(punch_t * fps); zi, zo = 3, 8
     W, H = [int(x) for x in CFG["resolution"].split("x")]
-
-    # Courbe ease-out sur le retour
-    zoom_expr = (
-        f"if(between(on,{pf},{pf+zi}),"
-        f"1.0+(on-{pf})*{scale-1:.3f}/{zi},"
-        f"if(between(on,{pf+zi},{pf+zi+zo}),"
-        f"{scale:.3f}-({scale-1:.3f})*(on-{pf+zi})/{zo},"
-        f"1.0))"
-    )
-    vf = (
-        f"zoompan=z='{zoom_expr}'"
-        f":x='iw/2-(iw/zoom/2)'"
-        f":y='ih/2-(ih/zoom/2)'"
-        f":d=1:s={W}x{H}:fps={fps}"
-    )
-    r = run(f'ffmpeg -y -i "{src}" -vf "{vf}" '
-            f'-c:v libx264 -preset fast -crf {CFG["crf"]} -an -pix_fmt yuv420p "{out}"')
+    ze = (f"if(between(on,{pf},{pf+zi}),1.0+(on-{pf})*{scale-1:.3f}/{zi},"
+          f"if(between(on,{pf+zi},{pf+zi+zo}),{scale:.3f}-({scale-1:.3f})*(on-{pf+zi})/{zo},1.0))")
+    vf = f"zoompan=z='{ze}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={fps}"
+    r  = run(f'ffmpeg -y -i "{src}" -vf "{vf}" '
+             f'-c:v libx264 -preset fast -crf {CFG["crf"]} -an -pix_fmt yuv420p "{out}"')
     if r.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) < 1000:
-        print("  ⚠ zoom échoué — copie directe")
         run(f'cp "{src}" "{out}"', silent=True)
 
 def concat_segments(segments, out):
-    with open("list.txt", "w") as f:
-        for s in segments:
-            f.write(f"file '{s}'\n")
+    with open("list.txt","w") as f:
+        [f.write(f"file '{s}'\n") for s in segments]
     run(f'ffmpeg -y -f concat -safe 0 -i list.txt '
         f'-c:v libx264 -crf {CFG["crf"]} -preset fast '
         f'-pix_fmt yuv420p -movflags +faststart -an "{out}"')
 
 def merge_audio(video, audio_src, out):
-    vid_dur  = get_duration(video)
-    fade_dur = CFG["fade_dur"]
-    bitrate  = CFG["audio_br"]
-    fade_st  = max(0, vid_dur - fade_dur - 0.1)
+    vd = get_duration(video); fd = CFG["fade_dur"]
     run(f'ffmpeg -y -i "{video}" -i "{audio_src}" '
-        f'-map 0:v -map 1:a -t {vid_dur:.4f} '
-        f'-c:v copy -c:a aac -b:a {bitrate}k '
-        f'-af "afade=t=out:st={fade_st:.3f}:d={fade_dur}" '
+        f'-map 0:v -map 1:a -t {vd:.4f} '
+        f'-c:v copy -c:a aac -b:a {CFG["audio_br"]}k '
+        f'-af "afade=t=out:st={max(0,vd-fd-0.1):.3f}:d={fd}" '
         f'-movflags +faststart "{out}"')
 
 # ─────────────────────────────────────────────────────────────────────
@@ -616,25 +461,20 @@ def start():
     if not os.path.exists('p.json'):
         print("✗ p.json introuvable"); return
 
-    with open('p.json', 'r') as f:
-        data = json.load(f)
-
-    # Appliquer les options depuis p.json
+    with open('p.json') as f: data = json.load(f)
     opts = data.get('options', {})
-    for k, v in opts.items():
-        if k in CFG:
-            CFG[k] = v
-    print(f"▶ Config : {CFG['resolution']} {CFG['fps']}fps CRF{CFG['crf']}")
+    for k,v in opts.items():
+        if k in CFG: CFG[k] = v
+    print(f"▶ ViraCut Les Crados v4 — {CFG['resolution']} {CFG['fps']}fps")
 
     videos = data.get('videos', [])
-    n = len(videos)
-    print(f"\n[1/7] Extraction de {n} clip(s)")
+    print(f"\n[1/7] Extraction de {len(videos)} clip(s)")
 
-    # ── 1. Extraction + analyse ──────────────────────────────────────
+    # 1. Extraction + analyse
     clips_data = []
     for i, v in enumerate(videos):
         path = f"r{i}.mp4"
-        with open(path, "wb") as fout:
+        with open(path,"wb") as fout:
             fout.write(base64.b64decode(v['data']))
         print(f"\n  Clip r{i}...")
         cd = analyze_clip(path, i)
@@ -642,133 +482,104 @@ def start():
               f"changes={len(cd['changes'])}  motion={cd['motion']:.1f}  rms={cd['rms']:.0f}dB")
         clips_data.append(cd)
 
-    # ── 2. Ordre narratif ────────────────────────────────────────────
+    # 2. Ordre narratif
     print(f"\n[2/7] Classification narrative")
-    video_roles = data.get('videos', [])
-    manual_roles = {v.get('role', 'auto') for v in video_roles}
+    video_roles  = data.get('videos', [])
+    manual_roles = {v.get('role','auto') for v in video_roles}
 
     if CFG["auto_order"] and manual_roles == {'auto'}:
         roles_order = score_roles(clips_data)
     else:
-        # Respecter l'ordre + rôles imposés depuis l'app
-        role_map = {'hook': 'hook', 'core': 'core', 'punch': 'punch', 'auto': None}
+        role_map    = {'hook':'hook','core':'core','punch':'punch','auto':None}
         roles_order = []
-        for i, v in enumerate(video_roles):
-            r = role_map.get(v.get('role', 'auto'))
-            if r is None:
-                r = ['hook', 'core', 'punch'][min(i, 2)]
+        for i,v in enumerate(video_roles):
+            r = role_map.get(v.get('role','auto')) or ['hook','core','punch'][min(i,2)]
             roles_order.append((r, clips_data[i]))
-        print("  → Ordre manuel respecté")
+        print("  → Ordre manuel")
 
     durations = []
-    for role, _ in roles_order:
-        if 'hook_core_punch' in role:
-            durations.append(CFG["hook_dur"] + CFG["core_dur"] + CFG["punch_dur"])
-        elif role == 'hook':
-            durations.append(CFG["hook_dur"])
-        elif role == 'core':
-            durations.append(CFG["core_dur"])
-        else:
-            durations.append(CFG["punch_dur"])
+    for role,_ in roles_order:
+        if 'hook_core_punch' in role: durations.append(CFG["hook_dur"]+CFG["core_dur"]+CFG["punch_dur"])
+        elif role=='hook':  durations.append(CFG["hook_dur"])
+        elif role=='core':  durations.append(CFG["core_dur"])
+        else:               durations.append(CFG["punch_dur"])
 
-    # ── 3. Analyse IA visuelle ───────────────────────────────────────
+    # 3+4. IA : analyse vision + textes (un seul appel)
     print(f"\n[3/7] Analyse IA")
-    clips_analysis = None
+    hook_text = core_text = punch_text = ""
+
     if CFG["ai_text"] and API_KEY:
-        clips_analysis = ai_analyze_clips(clips_data, roles_order)
+        result = ai_analyze_and_generate(
+            clips_data, roles_order,
+            CFG.get("custom_hook",""), CFG.get("custom_punch",""))
+        if result:
+            hook_text, core_text, punch_text, _ = result
 
-    # ── 4. Génération textes ─────────────────────────────────────────
-    print(f"\n[4/7] Génération textes")
-    if CFG["ai_text"]:
-        hook_text, core_text, punch_text = ai_generate_texts(
-            clips_analysis, roles_order,
-            CFG.get("custom_hook", ""),
-            CFG.get("custom_punch", "")
-        )
-    else:
-        hook_text, core_text, punch_text = _default_texts(
-            CFG.get("custom_hook", ""), CFG.get("custom_punch", "")
-        )
+    if not hook_text:
+        if not API_KEY: print("  ⚠ Pas d API key — fallback Les Crados")
+        seed = "".join(cd["path"] for cd in clips_data)
+        hook_text, core_text, punch_text = smart_fallback(
+            CFG.get("custom_hook",""), CFG.get("custom_punch",""), seed=seed)
+        print(f"  → Hook      : {hook_text}")
+        if core_text: print(f"  → Core      : {core_text}")
+        print(f"  → Punchline : {punch_text}")
 
-    # ── 5. Découpe + effets ──────────────────────────────────────────
-    print(f"\n[5/7] Découpe + effets")
-    if CFG["flash_cut"]:
-        make_flash()
+    # 5. Découpe + effets
+    print(f"\n[5/7] Decoupe + effets")
+    if CFG["flash_cut"]: make_flash()
 
     segments = []
     for i, ((role, clip), target) in enumerate(zip(roles_order, durations)):
-        path    = clip["path"]
-        changes = clip["changes"]
-        dur     = clip["duration"]
-        w, h    = clip["width"], clip["height"]
-
+        path    = clip["path"]; changes = clip["changes"]
+        dur     = clip["duration"]; w,h = clip["width"], clip["height"]
         cut_t   = best_cut(changes, target, dur)
-        vf      = make_vf(w, h)
         raw_seg = f"raw_seg{i}.mp4"
-        trim_segment(path, raw_seg, cut_t, vf)
-
+        trim_segment(path, raw_seg, cut_t, make_vf(w, h))
         seg_out = f"seg{i}.mp4"
-
-        # Zoom punch sur le segment CORE au moment le plus intense
-        if CFG["zoom_punch"] and role in ('core', 'hook_core_punch'):
-            in_seg = [(t, s) for t, s in changes if 0.3 < t < cut_t]
+        if CFG["zoom_punch"] and role in ('core','hook_core_punch'):
+            in_seg = [(t,s) for t,s in changes if 0.3 < t < cut_t]
             if in_seg:
-                # Choisir le pic d'intensité le plus proche du milieu (plus dramatique)
-                mid = cut_t / 2
-                pt = max(in_seg, key=lambda x: x[1] * (1 - abs(x[0] - mid) / max(mid, 0.1)))
-                print(f"  → Zoom punch r{clip['idx']} à {pt[0]:.3f}s (score {pt[1]:.1f})")
+                mid = cut_t/2
+                pt  = max(in_seg, key=lambda x: x[1]*(1-abs(x[0]-mid)/max(mid,0.1)))
+                print(f"  → Zoom punch r{clip['idx']} à {pt[0]:.3f}s")
                 apply_zoom_punch(raw_seg, seg_out, pt[0])
-            else:
-                run(f'cp "{raw_seg}" "{seg_out}"', silent=True)
-        else:
-            run(f'cp "{raw_seg}" "{seg_out}"', silent=True)
-
+            else: run(f'cp "{raw_seg}" "{seg_out}"', silent=True)
+        else: run(f'cp "{raw_seg}" "{seg_out}"', silent=True)
         segments.append(seg_out)
-        d = get_duration(seg_out)
-        print(f"  ✓ Segment {i} ({role}) → {d:.3f}s")
+        print(f"  ✓ seg{i} ({role}) → {get_duration(seg_out):.3f}s")
 
-    # ── 6. Assemblage ────────────────────────────────────────────────
+    # 6. Assemblage
     print(f"\n[6/7] Assemblage")
     interleaved = []
-    for i, seg in enumerate(segments):
+    for i,seg in enumerate(segments):
         interleaved.append(seg)
-        if i < len(segments) - 1 and CFG["flash_cut"] and os.path.exists("flash.mp4"):
+        if i < len(segments)-1 and CFG["flash_cut"] and os.path.exists("flash.mp4"):
             interleaved.append("flash.mp4")
     concat_segments(interleaved, "no_text.mp4")
 
-    # ── 7. Textes + Audio ────────────────────────────────────────────
+    # 7. Textes + Audio
     print(f"\n[7/7] Textes + Audio")
-    if CFG["ai_text"] or (CFG.get("custom_hook") or CFG.get("custom_punch")):
-        print(f"  Textes : '{hook_text}' | '{core_text}' | '{punch_text}'")
-        apply_text_overlay("no_text.mp4", "no_audio.mp4", hook_text, core_text, punch_text)
-    else:
-        run('cp no_text.mp4 no_audio.mp4', silent=True)
+    print(f"  Hook={hook_text!r}  Core={core_text!r}  Punch={punch_text!r}")
+    apply_text_overlay("no_text.mp4", "no_audio.mp4", hook_text, core_text, punch_text)
 
     audio_clip = None
     for cd in clips_data:
-        has_audio = run(f'ffprobe -v quiet -select_streams a -show_streams "{cd["path"]}"',
-                       silent=True).stdout.strip()
-        if has_audio:
+        if run(f'ffprobe -v quiet -select_streams a -show_streams "{cd["path"]}"', silent=True).stdout.strip():
             audio_clip = cd["path"]; break
 
-    if audio_clip:
-        merge_audio("no_audio.mp4", audio_clip, "output.mp4")
-    else:
-        os.rename("no_audio.mp4", "output.mp4")
+    if audio_clip: merge_audio("no_audio.mp4", audio_clip, "output.mp4")
+    else: os.rename("no_audio.mp4", "output.mp4")
 
-    # ── Rapport ──────────────────────────────────────────────────────
     if os.path.exists("output.mp4"):
-        fd = get_duration("output.mp4")
-        fw, fh = get_dimensions("output.mp4")
-        print(f"\n{'='*50}")
-        print(f"✅ SUCCÈS  {fw}x{fh}  {fd:.2f}s")
+        fd = get_duration("output.mp4"); fw,fh = get_dimensions("output.mp4")
+        print(f"\n{'='*52}")
+        print(f"✅ SUCCES  {fw}x{fh}  {fd:.2f}s")
         print(f"   Hook       : {hook_text}")
-        if core_text:
-            print(f"   Core text  : {core_text}")
+        if core_text: print(f"   Core       : {core_text}")
         print(f"   Punchline  : {punch_text}")
-        print(f"{'='*50}")
+        print(f"{'='*52}")
     else:
-        print("\n❌ ÉCHEC : output.mp4 non généré")
+        print("\n❌ ECHEC : output.mp4 non genere")
 
 if __name__ == "__main__":
     start()
