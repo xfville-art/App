@@ -14,43 +14,38 @@ def start():
     dur_seg = CFG["total_dur"] / len(videos)
     processed = []
 
-    # 1. Traitement des clips (Vidéo seule)
     for i, v in enumerate(videos):
         raw = f"r{i}.mp4"
         with open(raw, "wb") as f: f.write(base64.b64decode(v['data']))
+        
         out = f"s{i}.mp4"
+        # MODIFICATION : On enlève '-an' et on ajoute '-c:a aac' pour garder le son
+        # On utilise scale/crop pour le visuel
         vf = "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280"
-        # On force la suppression de tout vieil audio corrompu avec -an
-        run(f'ffmpeg -y -i {raw} -t {dur_seg} -vf "{vf}" -c:v libx264 -an {out}')
+        
+        # Commande FFmpeg qui préserve l'audio de chaque clip
+        run(f'ffmpeg -y -i {raw} -t {dur_seg} -vf "{vf}" -c:v libx264 -crf 18 -c:a aac -ar 44100 {out}')
         processed.append(out)
 
-    # 2. Concaténation de la vidéo muette
+    # 2. Concaténation de la VIDÉO et de l'AUDIO
     with open("l.txt", "w") as f:
         for c in processed: f.write(f"file '{c}'\n")
-    run("ffmpeg -y -f concat -i l.txt -c copy silent_video.mp4")
+    
+    # L'option '-f concat' doit inclure l'audio, donc on ne met pas '-c copy' si les formats audio diffèrent
+    run("ffmpeg -y -f concat -i l.txt -c:v copy -c:a aac output_with_sound.mp4")
 
-    # 3. GÉNÉRATION AUDIO (Le correctif)
-    # On crée une nappe sonore "Dark Ambient" directement via FFmpeg
-    # anoisesrc crée le son, extrinsically mixé avec un filtre sine pour un drone profond
-    audio_gen = (
-        "ffmpeg -y -f lavfi -i \"anoisesrc=d=26:c=brown:amp=0.06,lowpass=f=300\" "
-        "-c:a aac -b:a 128k noise.m4a"
-    )
-    run(audio_gen)
-
-    # 4. ASSEMBLAGE FINAL (Video + Audio + Watermark)
+    # 3. Finalisation (Logo + Fade Out)
+    # On s'assure de ne pas perdre le son lors de l'ajout du logo
     brand = f"drawtext=text='@LesCrados.ai':fontfile={FONT}:fontsize=35:fontcolor=white@0.3:x=w-text_w-50:y=100"
     
-    # -shortest assure que tout s'arrête en même temps
     final_cmd = (
-        f"ffmpeg -y -i silent_video.mp4 -i noise.m4a "
-        f"-vf \"{brand},fade=t=out:st=25:d=1\" "
-        f"-map 0:v:0 -map 1:a:0 -c:v libx264 -c:a copy -shortest output.mp4"
+        f"ffmpeg -y -i output_with_sound.mp4 -vf \"{brand},fade=t=out:st={CFG['total_dur']-1}:d=1\" "
+        f"-c:v libx264 -c:a copy output.mp4"
     )
     run(final_cmd)
     
     if os.path.exists("output.mp4"):
-        print("✅ Rendu v22 terminé avec AMBIANCE SONORE.")
+        print("✅ Rendu terminé : Audio d'origine conservé et mixé.")
 
 if __name__ == "__main__":
     start()
