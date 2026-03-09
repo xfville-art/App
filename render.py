@@ -19,55 +19,55 @@ def start():
     videos = data.get('videos', [])
     processed = []
     
-    # 1. NORMALISATION (Video seule pour éviter les conflits audio)
+    # 1. Normalisation Vidéo (Sans son pour l'instant)
     for i, v in enumerate(videos):
         raw = f"r{i}.mp4"
         with open(raw, "wb") as f: f.write(base64.b64decode(v['data']))
         out = f"s{i}.mp4"
-        
-        # On force un format vidéo ultra-standard sans audio pour l'instant
         vf = f"scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,fps={CFG['fps']},setpts=PTS-STARTPTS"
         run(f'ffmpeg -y -i {raw} -vf "{vf}" -c:v libx264 -crf 18 -an {out}')
         processed.append(out)
 
-    # 2. CONCATÉNATION VIDÉO SANS ÉCHEC
+    # 2. Assemblage des clips
     with open("list.txt", "w") as f:
         for p in processed: f.write(f"file '{p}'\n")
     run("ffmpeg -y -f concat -safe 0 -i list.txt -c copy base_video.mp4")
 
-    # 3. RÉCUPÉRATION DE L'AUDIO (On prend le son global du premier clip ou on mixe)
-    # Pour faire simple et robuste, on prend l'audio du fichier r0.mp4
-    run("ffmpeg -y -i base_video.mp4 -i r0.mp4 -map 0:v -map 1:a? -c:v copy -c:a aac -shortest base_with_audio.mp4")
-
-    # 4. HABILLAGE (On utilise un fichier de script pour les filtres pour éviter les erreurs de ligne de commande)
-    res = run("ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 base_with_audio.mp4")
+    # 3. Récupération de l'audio et durée
+    run("ffmpeg -y -i base_video.mp4 -i r0.mp4 -map 0:v -map 1:a? -c:v copy -c:a aac -shortest base_audio.mp4")
+    
+    res = run("ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 base_audio.mp4")
     try:
         total_dur = float(res.stdout.strip())
     except:
-        total_dur = 10.0
+        total_dur = 12.0
 
-    punchlines = ["EXPERIENCE INTERDITE", "MUTATION GENIALE", "L'ART DU PIRE", "COLLECTION 2026"]
+    # 4. CRÉATION DU FICHIER DE FILTRES (C'est ici que ça change tout !)
     dur_per_txt = total_dur / len(processed)
+    punchlines = ["EXPÉRIENCE INTERDITE", "MUTATION GÉNIALE", "L'ART DU PIRE", "COLLECTION 2026"]
     
-    text_filters = []
+    filter_lines = []
+    # Watermark
+    filter_lines.append(f"drawtext=text='{CFG['watermark']}':fontfile={FONT}:fontsize=24:fontcolor=white@0.2:x=w-text_w-40:y=60")
+    
+    # Textes
     for i in range(len(processed)):
         t_start = i * dur_per_txt
         t_end = (i + 1) * dur_per_txt
         txt = punchlines[i % len(punchlines)]
-        # Style épuré : texte blanc, petite ombre, pas de caractères spéciaux
-        f_txt = (f"drawtext=text='{txt}':fontfile={FONT}:fontsize={CFG['text_size']}:"
-                 f"fontcolor=white:shadowcolor=black@0.8:shadowx=2:shadowy=2:"
-                 f"x=(w-text_w)/2:y=h-200:enable='between(t,{t_start},{t_end})'")
-        text_filters.append(f_txt)
+        filter_lines.append(
+            f"drawtext=text='{txt}':fontfile={FONT}:fontsize={CFG['text_size']}:fontcolor=white:"
+            f"shadowcolor=black@0.8:shadowx=2:shadowy=2:x=(w-text_w)/2:y=h-200:enable='between(t,{t_start},{t_end})'"
+        )
 
-    brand = f"drawtext=text='{CFG['watermark']}':fontfile={FONT}:fontsize=20:fontcolor=white@0.3:x=w-text_w-30:y=40"
+    with open("filters.txt", "w") as f:
+        f.write(",".join(filter_lines))
+
+    # 5. RENDU FINAL (Lecture du fichier de filtres)
+    # L'option -filter_script évite les problèmes de guillemets dans la ligne de commande
+    run(f'ffmpeg -y -i base_audio.mp4 -filter_script:v filters.txt -c:v libx264 -crf 18 -c:a copy output.mp4')
     
-    # 5. RENDU FINAL (On limite le nombre de filtres actifs simultanément)
-    all_filters = f"{brand},{','.join(text_filters)}"
-    final_cmd = f'ffmpeg -y -i base_with_audio.mp4 -vf "{all_filters}" -c:v libx264 -crf 20 -c:a copy output.mp4'
-    run(final_cmd)
-    
-    print(f"🎬 MASTER V38 OK - DURÉE : {total_dur:.2f}s")
+    print(f"✅ RENDU v39 MASTER TERMINÉ - {total_dur:.2f}s")
 
 if __name__ == "__main__":
     start()
