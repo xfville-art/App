@@ -504,7 +504,29 @@ def write_text_filter(hook, core_text, punchline, total_dur):
         f"enable='between(t\\,{ft(pl_in)}\\,{ft(pl_out)})'"
     )
 
-    full_filter = hook_filter + core_filter + pl_filter
+    # ── FOND SEMI-TRANSPARENT (optionnel) ────────────────────────
+    bg_filters = ""
+    if CFG.get("text_bg"):
+        # Bande noire derrière le hook
+        bg_filters += (
+            f"drawbox=x=0:y={hook_y_final-8}:w=iw:h={h_sz+20}:"
+            f"color=black@0.45:t=fill:"
+            f"enable='between(t\\,{ft(hook_in)}\\,{ft(hook_out)})',"
+        )
+        # Bande noire derrière la punchline
+        bg_filters += (
+            f"drawbox=x=0:y={pl_y_final-8}:w=iw:h={p_sz+20}:"
+            f"color=black@0.45:t=fill:"
+            f"enable='between(t\\,{ft(pl_in)}\\,{ft(pl_out)})',"
+        )
+        if core_text:
+            bg_filters += (
+                f"drawbox=x=0:y={core_y-8}:w=iw:h={c_sz+20}:"
+                f"color=black@0.45:t=fill:"
+                f"enable='between(t\\,{ft(core_in)}\\,{ft(core_out)})',"
+            )
+
+    full_filter = bg_filters + hook_filter + core_filter + pl_filter
     with open("text_filter.txt", "w", encoding="utf-8") as f:
         f.write(full_filter)
 
