@@ -11,7 +11,8 @@ def start():
     with open('p.json') as f: data = json.load(f)
     
     videos = data.get('videos', [])
-    dur_seg = CFG["total_dur"] / len(videos)
+    num = len(videos)
+    dur_seg = CFG["total_dur"] / num
     processed = []
 
     for i, v in enumerate(videos):
@@ -19,33 +20,31 @@ def start():
         with open(raw, "wb") as f: f.write(base64.b64decode(v['data']))
         
         out = f"s{i}.mp4"
-        # MODIFICATION : On enlève '-an' et on ajoute '-c:a aac' pour garder le son
-        # On utilise scale/crop pour le visuel
-        vf = "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280"
+        # AMÉLIORATION VISUELLE :
+        # 1. 'unsharp' : pour rendre les détails de l'IA plus croustillants (netteté).
+        # 2. 'vignette' : pour focaliser l'attention sur le centre du personnage.
+        # 3. 'fade' : fondu entrant/sortant sur chaque clip pour la fluidité.
+        vf = (f"scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,"
+              f"unsharp=3:3:1.5:3:3:0.5,vignette=angle=0.3,"
+              f"fade=t=in:st=0:d=0.4,fade=t=out:st={dur_seg-0.4}:d=0.4")
         
-        # Commande FFmpeg qui préserve l'audio de chaque clip
         run(f'ffmpeg -y -i {raw} -t {dur_seg} -vf "{vf}" -c:v libx264 -crf 18 -c:a aac -ar 44100 {out}')
         processed.append(out)
 
-    # 2. Concaténation de la VIDÉO et de l'AUDIO
+    # Concaténation (Vidéo + Audio)
     with open("l.txt", "w") as f:
         for c in processed: f.write(f"file '{c}'\n")
-    
-    # L'option '-f concat' doit inclure l'audio, donc on ne met pas '-c copy' si les formats audio diffèrent
-    run("ffmpeg -y -f concat -i l.txt -c:v copy -c:a aac output_with_sound.mp4")
+    run("ffmpeg -y -f concat -i l.txt -c:v copy -c:a aac temp_final.mp4")
 
-    # 3. Finalisation (Logo + Fade Out)
-    # On s'assure de ne pas perdre le son lors de l'ajout du logo
+    # Finalisation : Logo discret + Fondu final
     brand = f"drawtext=text='@LesCrados.ai':fontfile={FONT}:fontsize=35:fontcolor=white@0.3:x=w-text_w-50:y=100"
     
     final_cmd = (
-        f"ffmpeg -y -i output_with_sound.mp4 -vf \"{brand},fade=t=out:st={CFG['total_dur']-1}:d=1\" "
+        f"ffmpeg -y -i temp_final.mp4 -vf \"{brand},fade=t=out:st={CFG['total_dur']-1}:d=1\" "
         f"-c:v libx264 -c:a copy output.mp4"
     )
     run(final_cmd)
-    
-    if os.path.exists("output.mp4"):
-        print("✅ Rendu terminé : Audio d'origine conservé et mixé.")
+    print("✅ Rendu v23 terminé : Netteté améliorée, Vignette et Synchro Audio.")
 
 if __name__ == "__main__":
     start()
