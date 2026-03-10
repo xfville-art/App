@@ -83,7 +83,7 @@ def normalize(src, out, opts):
     if has_audio(src):
         cmd = (f'ffmpeg -y -i "{src}" '
                f'-vf "{scale_crop}" '
-               f'-c:v libx264 -crf {crf} -preset ultrafast '
+               f'-c:v libx264 -pix_fmt yuv420p -crf {crf} -preset ultrafast '
                f'-c:a aac -b:a {abr}k -ar 44100 -ac 2 '
                f'"{out}"')
     else:
@@ -91,7 +91,7 @@ def normalize(src, out, opts):
                f'-f lavfi -i "anullsrc=r=44100:cl=stereo" '
                f'-filter_complex "[0:v]{scale_crop}[v];[1:a]atrim=0:10[a]" '
                f'-map "[v]" -map "[a]" '
-               f'-c:v libx264 -crf {crf} -preset ultrafast '
+               f'-c:v libx264 -pix_fmt yuv420p -crf {crf} -preset ultrafast '
                f'-c:a aac -b:a {abr}k '
                f'-shortest "{out}"')
     run(cmd)
@@ -382,7 +382,7 @@ def build_punch_segment(src, out, cut_dur, role, opts):
     if has_audio(src):
         cmd = (f'ffmpeg -y -ss 0 -t {cut_dur:.3f} -i "{src}" '
                f'-vf "{vf}" '
-               f'-c:v libx264 -crf {crf} -preset fast '
+               f'-c:v libx264 -pix_fmt yuv420p -crf {crf} -preset fast '
                f'-c:a aac -b:a {abr}k -ar 44100 -ac 2 '
                f'-shortest "{out}"')
     else:
@@ -390,7 +390,7 @@ def build_punch_segment(src, out, cut_dur, role, opts):
                f'-f lavfi -i "anullsrc=r=44100:cl=stereo" '
                f'-filter_complex "[0:v]{vf}[v];[1:a]atrim=0:{cut_dur:.3f}[a]" '
                f'-map "[v]" -map "[a]" '
-               f'-c:v libx264 -crf {crf} -preset fast '
+               f'-c:v libx264 -pix_fmt yuv420p -crf {crf} -preset fast '
                f'-c:a aac -b:a {abr}k '
                f'-shortest "{out}"')
     run(cmd)
@@ -404,7 +404,7 @@ def build_flash(out, opts):
     run(f'ffmpeg -y '
         f'-f lavfi -i "color=c=white:size={W}x{H}:rate={fps}" '
         f'-f lavfi -i "anullsrc=r=44100:cl=stereo" '
-        f'-t {dur} -c:v libx264 -crf 18 -preset ultrafast '
+        f'-t {dur} -c:v libx264 -pix_fmt yuv420p -crf 18 -preset ultrafast '
         f'-c:a aac -b:a 128k "{out}"')
     return dur
 
@@ -501,7 +501,7 @@ def build_punch_final(segments, texts, opts):
     run(f'ffmpeg -y -i _base.mp4 '
         f'-vf "{vf}" '
         f'-af "{af}" '
-        f'-c:v libx264 -crf {crf} -preset fast '
+        f'-c:v libx264 -pix_fmt yuv420p -crf {crf} -preset fast '
         f'-c:a aac -b:a {abr}k '
         f'output.mp4')
 
@@ -536,7 +536,7 @@ def build_cinema_segment(src, seg_out, clip_dur, kb_zoom, opts):
     if has_audio(src):
         cmd = (f'ffmpeg -y -t {clip_dur:.2f} -i "{src}" '
                f'-vf "{vf}" '
-               f'-c:v libx264 -crf {crf} -preset fast '
+               f'-c:v libx264 -pix_fmt yuv420p -crf {crf} -preset fast '
                f'-c:a aac -b:a {abr}k -ar 44100 -ac 2 '
                f'-shortest "{seg_out}"')
     else:
@@ -544,7 +544,7 @@ def build_cinema_segment(src, seg_out, clip_dur, kb_zoom, opts):
                f'-f lavfi -i "anullsrc=r=44100:cl=stereo" '
                f'-filter_complex "[0:v]{vf}[v];[1:a]atrim=0:{clip_dur:.2f}[a]" '
                f'-map "[v]" -map "[a]" '
-               f'-c:v libx264 -crf {crf} -preset fast '
+               f'-c:v libx264 -pix_fmt yuv420p -crf {crf} -preset fast '
                f'-c:a aac -b:a {abr}k '
                f'-shortest "{seg_out}"')
     run(cmd)
@@ -586,7 +586,7 @@ def assemble_cinema(seg_paths, xfade_dur, opts):
     run(f'ffmpeg -y {inputs} '
         f'-filter_complex "{fc}" '
         f'-map "[vfin]" -map "[afin]" '
-        f'-c:v libx264 -crf {crf} -preset fast '
+        f'-c:v libx264 -pix_fmt yuv420p -crf {crf} -preset fast '
         f'-c:a aac -b:a {abr}k '
         f'_assembled.mp4')
 
@@ -642,7 +642,7 @@ def build_cinema_overlay(texts, opts):
     run(f'ffmpeg -y -i _assembled.mp4 '
         f'-vf "{vf}" '
         f'-af "{af}" '
-        f'-c:v libx264 -crf {crf} -preset fast '
+        f'-c:v libx264 -pix_fmt yuv420p -crf {crf} -preset fast '
         f'-c:a aac -b:a {abr}k '
         f'output.mp4')
 
