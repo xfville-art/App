@@ -59,8 +59,13 @@ def has_audio(path):
     return any(s.get("codec_type") == "audio" for s in d.get("streams", []))
 
 
+def strip_emojis(text):
+    """Supprime les emojis et caractères non-ASCII pour FFmpeg/Liberation."""
+    return ''.join(c for c in text if ord(c) < 128).strip()
+
 def escape_ffmpeg(text):
-    """Échappe un texte pour drawtext FFmpeg."""
+    """Strip emojis puis échappe pour drawtext FFmpeg."""
+    text = strip_emojis(text)
     return (text
             .replace("\\", "\\\\")
             .replace("'",  "\\'")
@@ -312,7 +317,7 @@ def generate_texts(descriptions, opts):
         "Génère EXACTEMENT ce JSON (sans markdown, sans explication) :\n"
         '{"hook":"4 MOTS MAX MAJUSCULES CHOC WTF",'
         '"core":"5 mots humour absurde crado",'
-        '"punch":"6 mots chute absurde emoji"}'
+        '"punch":"6 mots chute absurde SANS emoji SANS caractere special"}'
     )
 
     resp = api_call({
@@ -427,7 +432,7 @@ def build_punch_final(segments, texts, opts):
 
     hook_txt  = escape_ffmpeg(texts.get("hook",  "TAS VU CA"))
     core_txt  = escape_ffmpeg(texts.get("core",  "incroyable mais vrai"))
-    punch_txt = escape_ffmpeg(texts.get("punch", "c'était prévisible 💀"))
+    punch_txt = escape_ffmpeg(texts.get("punch", "c'etait previsible !"))
 
     # ── Flash cuts ──────────────────────────────────────────────────
     flash_dur = 0.0
@@ -557,301 +562,4 @@ def assemble_cinema(seg_paths, xfade_dur, opts):
     n   = len(seg_paths)
 
     if n == 1:
-        run(f'cp "{seg_paths[0]}" _assembled.mp4', check=False)
-        import shutil
-        shutil.copy(seg_paths[0], "_assembled.mp4")
-        return
-
-    inputs = " ".join(f'-i "{p}"' for p in seg_paths)
-
-    # Durée de chaque segment (pour calculer l'offset xfade)
-    durs = [duration(p) for p in seg_paths]
-
-    # Construire la chaîne de filtres xfade
-    v_parts, a_parts = [], []
-    offset = durs[0] - xfade_dur
-    prev_v, prev_a = "[0:v]", "[0:a]"
-
-    for i in range(1, n):
-        next_v = f"[xv{i}]" if i < n - 1 else "[vfin]"
-        next_a = f"[xa{i}]" if i < n - 1 else "[afin]"
-        v_parts.append(f"{prev_v}[{i}:v]xfade=transition=fade"
-                       f":duration={xfade_dur:.2f}:offset={offset:.3f}{next_v}")
-        a_parts.append(f"{prev_a}[{i}:a]acrossfade=d={xfade_dur:.2f}"
-                       f":c1=tri:c2=tri{next_a}")
-        prev_v, prev_a = next_v, next_a
-        offset += durs[i] - xfade_dur
-
-    fc = ";".join(v_parts + a_parts)
-    run(f'ffmpeg -y {inputs} '
-        f'-filter_complex "{fc}" '
-        f'-map "[vfin]" -map "[afin]" '
-        f'-c:v libx264 -pix_fmt yuv420p -crf {crf} -preset fast '
-        f'-c:a aac -b:a {abr}k '
-        f'_assembled.mp4')
-
-
-def build_cinema_overlay(texts, opts):
-    """Applique letterbox + logo + textes cinéma sur _assembled.mp4 → output.mp4."""
-    W, H   = cfg(opts, "resolution").split("x")
-    lb_h   = cfg(opts, "cinema_lb_h")
-    crf    = cfg(opts, "crf")
-    abr    = cfg(opts, "audio_br")
-    fade   = cfg(opts, "fade_dur")
-    Hi     = int(H)
-    lb_y_b = Hi - lb_h  # y-pos barre du bas
-
-    total = duration("_assembled.mp4")
-    mid_s = total * 0.25
-    mid_e = total * 0.72
-    fin_s = total * 0.76
-
-    hook_txt  = escape_ffmpeg(texts.get("hook",  "LES CRADOS"))
-    core_txt  = escape_ffmpeg(texts.get("core",  "une carte pour chaque horreur"))
-    punch_txt = escape_ffmpeg(texts.get("punch", "collectionne si tu oses 🤢"))
-
-    # Barres letterbox
-    lb = (f"drawbox=x=0:y=0:w={W}:h={lb_h}:color=black@0.88:t=fill,"
-          f"drawbox=x=0:y={lb_y_b}:w={W}:h={lb_h}:color=black@0.88:t=fill")
-
-    # Logo permanent (haut droit)
-    logo = (f"drawtext=fontfile={FONT}:text='LES CRADOS':"
-            f"fontsize=26:fontcolor=white@0.55:borderw=0:"
-            f"x=w-text_w-28:y={lb_h//2 - 13}")
-
-    # Titre/hook (en haut, dans la barre)
-    title = (f"drawtext=fontfile={FONT}:text='{hook_txt}':"
-             f"fontsize=48:fontcolor=white:borderw=3:bordercolor=black:"
-             f"x=(w-text_w)/2:y={lb_h//2 - 24}")
-
-    # Sous-titre core (centre, milieu vidéo)
-    sub = (f"drawtext=fontfile={FONT}:text='{core_txt}':"
-           f"fontsize=38:fontcolor=white@0.92:borderw=2:bordercolor=black@0.8:"
-           f"x=(w-text_w)/2:y=h/2-19:"
-           f"enable='between(t,{mid_s:.2f},{mid_e:.2f})'")
-
-    # Punch final (barre du bas)
-    punch = (f"drawtext=fontfile={FONT}:text='{punch_txt}':"
-             f"fontsize=40:fontcolor=#FFD60A:borderw=3:bordercolor=black:"
-             f"x=(w-text_w)/2:y={lb_y_b + lb_h//2 - 20}:"
-             f"enable='between(t,{fin_s:.2f},{total:.2f})'")
-
-    vf = f"{lb},{logo},{title},{sub},{punch}"
-    af = f"afade=t=out:st={max(0.0, total - fade):.3f}:d={fade}"
-
-    run(f'ffmpeg -y -i _assembled.mp4 '
-        f'-vf "{vf}" '
-        f'-af "{af}" '
-        f'-c:v libx264 -pix_fmt yuv420p -crf {crf} -preset fast '
-        f'-c:a aac -b:a {abr}k '
-        f'output.mp4')
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# ─── ENTRY POINT ──────────────────────────────────────────────────────
-# ═══════════════════════════════════════════════════════════════════════
-def start():
-    if not os.path.exists("p.json"):
-        print("❌ p.json manquant"); sys.exit(1)
-
-    with open("p.json") as f:
-        data = json.load(f)
-
-    clips_raw = data.get("videos", [])
-    opts      = data.get("options", {})
-    mode      = cfg(opts, "mode")
-    api_key   = ANTHROPIC_KEY
-
-    print("═" * 52)
-    print("  ViraCut render.py v5")
-    print(f"  Mode    : {mode}  |  Clips : {len(clips_raw)}")
-    print(f"  IA      : {'OUI' if api_key else 'NON (secret absent)'}")
-    print("═" * 52)
-
-    if not clips_raw:
-        print("❌ Aucun clip reçu"); sys.exit(1)
-
-    # ── Decode raw clips ──────────────────────────────────────────────
-    raw_paths = []
-    for i, v in enumerate(clips_raw):
-        raw = f"_raw_{i}.mp4"
-        with open(raw, "wb") as f:
-            f.write(base64.b64decode(v["data"]))
-        raw_paths.append((raw, v.get("role", "auto")))
-        print(f"  Clip {i}: {raw}  rôle={v.get('role','auto')}")
-
-    # ── Résolution auto du mode ───────────────────────────────────────
-    if mode == "auto":
-        total_dur = sum(duration(p) for p, _ in raw_paths)
-        if len(raw_paths) == 1 or total_dur > 12.0:
-            mode = "cinema"
-        else:
-            mode = "punch"
-        print(f"\n  Mode AUTO → {mode.upper()} "
-              f"(durée totale clips : {total_dur:.1f}s)")
-
-    # ══════════════════════════════════════════════════════════════════
-    # ─── MODE CINÉMA ─────────────────────────────────────────────────
-    # ══════════════════════════════════════════════════════════════════
-    if mode == "cinema":
-        n       = len(raw_paths)
-        target  = cfg(opts, "cinema_dur")
-        cmin    = cfg(opts, "cinema_clip_min")
-        cmax    = cfg(opts, "cinema_clip_max")
-        xfade   = cfg(opts, "cinema_xfade")
-        kb_zoom = cfg(opts, "cinema_kb_zoom")
-
-        clip_dur = min(cmax, max(cmin,
-                      (target - xfade * (n - 1)) / n))
-
-        print(f"\n[1/5] Segments Ken Burns ({n}×{clip_dur:.1f}s)…")
-        seg_paths = []
-        for i, (src, role) in enumerate(raw_paths):
-            seg_out = f"_cin_{i}.mp4"
-            print(f"  Segment {i} ({role})…")
-            build_cinema_segment(src, seg_out, clip_dur, kb_zoom, opts)
-            seg_paths.append(seg_out)
-
-        print("\n[2/5] Vision IA + descriptions…")
-        descriptions = {}
-        if api_key and cfg(opts, "ai_text"):
-            for i, (src, role) in enumerate(raw_paths):
-                lbl = role if role != "auto" else f"clip{i}"
-                print(f"  Vision clip {i} ({lbl})…")
-                desc = vision_describe(src, lbl)
-                if desc:
-                    descriptions[lbl] = desc
-                    print(f"    → {desc[:90]}")
-
-        print("\n[3/5] Génération textes cinéma…")
-        texts = {
-            "hook":  "LES CRADOS",
-            "core":  "une carte pour chaque horreur",
-            "punch": "collectionne si tu oses 🤢",
-        }
-        if api_key and descriptions and cfg(opts, "ai_text"):
-            result = generate_texts(descriptions, opts)
-            if result:
-                texts = result
-                print(f"  HOOK  : {texts.get('hook')}")
-                print(f"  CORE  : {texts.get('core')}")
-                print(f"  PUNCH : {texts.get('punch')}")
-            else:
-                print("  (fallback textes par défaut)")
-
-        # Override custom hook / punch
-        if cfg(opts, "custom_hook"):
-            texts["hook"] = cfg(opts, "custom_hook")
-        if cfg(opts, "custom_punch"):
-            texts["punch"] = cfg(opts, "custom_punch")
-
-        print("\n[4/5] Assemblage crossfade…")
-        assemble_cinema(seg_paths, xfade, opts)
-
-        print("\n[5/5] Letterbox + logo + overlay final…")
-        build_cinema_overlay(texts, opts)
-
-    # ══════════════════════════════════════════════════════════════════
-    # ─── MODE PUNCH ──────────────────────────────────────────────────
-    # ══════════════════════════════════════════════════════════════════
-    else:
-        scdet_thr = cfg(opts, "scdet_thr")
-
-        print("\n[1/7] Extraction + analyse multi-métriques…")
-        clips_meta = []
-        for i, (path, user_role) in enumerate(raw_paths):
-            print(f"  Clip {i} analyse…")
-            m = extract_metrics(path, scdet_thr)
-            m.update({"path": path, "index": i, "user_role": user_role})
-            clips_meta.append(m)
-            print(f"    dur={m['duration']:.2f}s  scènes={m['scene_count']}"
-                  f"  rms={m['rms']:.1f}  motion={m['motion']:.1f}")
-
-        print("\n[2/7] Classification narrative (scoring 3D)…")
-        all_auto = all(m["user_role"] == "auto" for m in clips_meta)
-        if cfg(opts, "auto_order") and all_auto:
-            ordered = score_and_order(clips_meta)
-        else:
-            # Respect des rôles manuels
-            role_order = {"hook": 0, "core": 1, "punch": 2, "auto": 1}
-            ordered = sorted(clips_meta,
-                             key=lambda m: role_order.get(m["user_role"], 1))
-            # Auto → core par défaut si mélange
-            for m in ordered:
-                m["role"] = m["user_role"] if m["user_role"] != "auto" else "core"
-            # Si un seul clip, il joue le rôle hook
-            if len(ordered) == 1:
-                ordered[0]["role"] = "hook"
-
-        for m in ordered:
-            print(f"  {m.get('role','?'):5s} ← clip {m['index']} "
-                  f"(dur={m['duration']:.1f}s "
-                  f"hook={m.get('hook_score',0):.1f} "
-                  f"punch={m.get('punch_score',0):.1f})")
-
-        print("\n[3/7] Vision IA (Claude) — 3 frames / clip…")
-        descriptions = {}
-        if api_key and cfg(opts, "ai_text"):
-            for m in ordered:
-                role = m.get("role", "core")
-                print(f"  Vision {role}…")
-                desc = vision_describe(m["path"], role)
-                if desc:
-                    descriptions[role] = desc
-                    print(f"    → {desc[:90]}")
-
-        print("\n[4/7] Génération textes narratifs…")
-        texts = {
-            "hook":  cfg(opts, "custom_hook")  or "TAS VU CA",
-            "core":  "incroyable mais vrai",
-            "punch": cfg(opts, "custom_punch") or "c'était prévisible 💀",
-        }
-        if api_key and descriptions and cfg(opts, "ai_text"):
-            result = generate_texts(descriptions, opts)
-            if result:
-                # Custom override
-                if cfg(opts, "custom_hook"):
-                    result["hook"] = cfg(opts, "custom_hook")
-                if cfg(opts, "custom_punch"):
-                    result["punch"] = cfg(opts, "custom_punch")
-                texts = result
-            else:
-                print("  (fallback textes par défaut)")
-        print(f"  HOOK    : {texts.get('hook')}")
-        print(f"  CORE    : {texts.get('core')}")
-        print(f"  PUNCH   : {texts.get('punch')}")
-
-        print("\n[5/7] Découpe + effets par segment…")
-        dur_map = {
-            "hook":  cfg(opts, "hook_dur"),
-            "core":  cfg(opts, "core_dur"),
-            "punch": cfg(opts, "punch_dur"),
-        }
-        tol = cfg(opts, "tolerance")
-
-        segments = []
-        for m in ordered:
-            role   = m.get("role", "core")
-            target = dur_map.get(role, 2.5)
-            cut    = find_natural_cut(m["path"], target, tol, scdet_thr)
-            seg_out = f"_seg_{m['index']}_{role}.mp4"
-            print(f"  {role:5s} : {cut:.2f}s (target={target}s) …")
-            build_punch_segment(m["path"], seg_out, cut, role, opts)
-            segments.append((seg_out, role, cut))
-
-        print("\n[6/7] Assemblage + textes animés + audio…")
-        build_punch_final(segments, texts, opts)
-
-        print("\n[7/7] output.mp4 généré ✓")
-
-    # Vérification finale
-    if os.path.isfile("output.mp4"):
-        size = os.path.getsize("output.mp4")
-        print(f"\n✅ output.mp4 — {size // 1024} KB")
-    else:
-        print("\n❌ output.mp4 absent !")
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    start()
+        run(f'cp "{seg_paths[0]}" _assembled.mp4', check=Fals
