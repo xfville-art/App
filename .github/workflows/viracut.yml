@@ -1,7 +1,11 @@
-name: VIRACUT
+Name: VIRACUT
 
 on:
   workflow_dispatch:
+
+# Ajout de la variable globale pour forcer l'utilisation de Node 24
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   render:
@@ -9,7 +13,6 @@ jobs:
     timeout-minutes: 30
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
