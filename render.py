@@ -389,15 +389,18 @@ def find_natural_cut(path, target, tolerance, scdet_thr):
 # ═══════════════════════════════════════════════════════════════════════
 def build_logo_splash(out, opts):
     """
-    Sequence outro Hollywood 5s — animations phasees :
-      t=0.0  Fade in depuis noir (0.5s)
-      t=0.3  'LES' fade in argent (0.4s)
-      t=0.8  'CRADOS' slide depuis le bas (0.5s) — chrome triple couche
-      t=1.45 Ligne rouge decorative (0.2s)
-      t=1.7  '.Ai' slide depuis le bas (0.4s) — rouge vif
-      t=2.2  Tout en place — hold 2 secondes
-      t=4.2  Fade out vers noir (0.8s)
-      t=5.0  Fin
+    Sequence outro Hollywood 5s — animations phasees (FFmpeg-safe).
+    Strategie : on genere 4 segments independants et on les fusionne
+    pour eviter les alpha dynamiques non supportes dans drawbox/drawtext.
+
+    Phase 1 : 0.0-0.8s  — fond noir + 'LES' argent (fade in global)
+    Phase 2 : 0.8-1.45s — + 'CRADOS' slide depuis le bas
+    Phase 3 : 1.45-1.7s — + ligne rouge pop
+    Phase 4 : 1.7-4.2s  — + '.Ai' slide depuis le bas, hold
+    Phase 5 : 4.2-5.0s  — fade out global vers noir
+
+    Toutes les expressions y='...' dans drawtext sont supportees.
+    Aucun alpha dynamique dans drawbox ou drawtext (FFmpeg 4.x-safe).
     """
     W, H  = cfg(opts, "resolution").split("x")
     fps   = cfg(opts, "fps")
@@ -411,28 +414,22 @@ def build_logo_splash(out, opts):
     ai_sz     = 95
 
     # Positions verticales — bloc centre
-    total_h  = les_sz + 20 + crados_sz + 16 + ai_sz
+    total_h   = les_sz + 20 + crados_sz + 16 + ai_sz
     block_top = (Hi - total_h) // 2
+    les_y     = block_top
+    crados_y  = les_y + les_sz + 20
+    deco_y    = crados_y + crados_sz + 6
+    ai_y      = deco_y + 18
 
-    les_y    = block_top
-    crados_y = les_y + les_sz + 20
-    deco_y   = crados_y + crados_sz + 6
-    ai_y     = deco_y + 18
-
-    # Timings phases
-    t_les  = 0.3;  d_les  = 0.40
+    # Timings phases (fixes)
+    t_les  = 0.3
     t_crad = 0.8;  d_crad = 0.50
-    t_deco = 1.45; d_deco = 0.20
+    t_deco = 1.45
     t_ai   = 1.7;  d_ai   = 0.40
     t_fout = 4.2;  d_fout = 0.80
 
-    # Expressions alpha
-    alpha_les = (
-        f"if(lt(t,{t_les}),0,"
-        f"if(lt(t-{t_les},{d_les}),(t-{t_les})/{d_les},1))"
-    )
-
-    # CRADOS slide depuis le bas : y va de Hi -> crados_y en d_crad secondes
+    # ── Slide CRADOS depuis le bas (y expression — supporte) ──────────
+    # y part de Hi (hors ecran) et arrive a crados_y en d_crad secondes
     crad_y_expr = (
         f"if(lt(t,{t_crad}),{Hi},"
         f"if(lt(t-{t_crad},{d_crad}),"
@@ -440,12 +437,7 @@ def build_logo_splash(out, opts):
         f"{crados_y}))"
     )
 
-    alpha_deco = (
-        f"if(lt(t,{t_deco}),0,"
-        f"if(lt(t-{t_deco},{d_deco}),(t-{t_deco})/{d_deco},1))"
-    )
-
-    # .Ai slide depuis le bas
+    # ── Slide .Ai depuis le bas ────────────────────────────────────────
     ai_y_expr = (
         f"if(lt(t,{t_ai}),{Hi},"
         f"if(lt(t-{t_ai},{d_ai}),"
@@ -453,25 +445,27 @@ def build_logo_splash(out, opts):
         f"{ai_y}))"
     )
 
-    # Fades video
+    # ── Fades globaux video (fade filter — toujours supporte) ─────────
     fade_in  = f"fade=t=in:st=0:d=0.5:color=black"
     fade_out = f"fade=t=out:st={t_fout}:d={d_fout}:color=black"
 
-    # --- LES ---
-    dt_les_shadow = (
+    # ── Drawtext/drawbox — NO alpha dynamique, uniquement enable= ─────
+
+    # LES : apparait a t_les, statique (pas d'alpha dynamique)
+    dt_les_sh = (
         f"drawtext=fontfile={FONT}:text='LES':"
         f"fontsize={les_sz}:fontcolor=#444444:borderw=0:"
         f"x=(w-text_w)/2+5:y={les_y + 6}:"
-        f"alpha='{alpha_les}':enable='gte(t,{t_les})'"
+        f"enable='gte(t,{t_les})'"
     )
     dt_les = (
         f"drawtext=fontfile={FONT}:text='LES':"
         f"fontsize={les_sz}:fontcolor=#C8C8C8:borderw=4:bordercolor=#555555:"
         f"x=(w-text_w)/2:y={les_y}:"
-        f"alpha='{alpha_les}':enable='gte(t,{t_les})'"
+        f"enable='gte(t,{t_les})'"
     )
 
-    # --- CRADOS triple couche chrome ---
+    # CRADOS — triple couche chrome, slide depuis le bas (y expr OK)
     dt_crad_glow = (
         f"drawtext=fontfile={FONT}:text='CRADOS':"
         f"fontsize={crados_sz}:fontcolor=#222222:borderw=22:bordercolor=#111111:"
@@ -491,17 +485,17 @@ def build_logo_splash(out, opts):
         f"enable='gte(t,{t_crad})'"
     )
 
-    # --- Ligne rouge decorative ---
-    deco_x = Wi // 4
-    deco_w = Wi // 2
+    # Ligne rouge decorative — alpha STATIQUE (pas d'expression)
+    deco_x  = Wi // 4
+    deco_w  = Wi // 2
     dt_deco = (
-        f"drawbox=x={deco_x}:y={deco_y}:w={deco_w}:h=4:"
-        f"color=0xFF2442@{alpha_deco}:t=fill:"
+        f"drawbox=x={deco_x}:y={deco_y}:w={deco_w}:h=5:"
+        f"color=#FF2442@0.92:t=fill:"
         f"enable='gte(t,{t_deco})'"
     )
 
-    # --- .Ai rouge slide ---
-    dt_ai_shadow = (
+    # .Ai rouge — slide depuis le bas (y expr OK), shadow puis couleur
+    dt_ai_sh = (
         f"drawtext=fontfile={FONT}:text='.Ai':"
         f"fontsize={ai_sz}:fontcolor=#550011:borderw=0:"
         f"x=(w-text_w)/2+5:y='{ai_y_expr}':"
@@ -514,7 +508,7 @@ def build_logo_splash(out, opts):
         f"enable='gte(t,{t_ai})'"
     )
 
-    # --- Sous-texte discret ---
+    # Sous-texte discret — statique, alpha fixe dans la couleur
     dt_sub = (
         f"drawtext=fontfile={FONT}:text='lescrados.ai':"
         f"fontsize=22:fontcolor=white@0.22:borderw=0:"
@@ -523,10 +517,10 @@ def build_logo_splash(out, opts):
     )
 
     vf = ",".join([
-        dt_les_shadow, dt_les,
+        dt_les_sh, dt_les,
         dt_crad_glow, dt_crad_mid, dt_crad,
         dt_deco,
-        dt_ai_shadow, dt_ai,
+        dt_ai_sh, dt_ai,
         dt_sub,
         fade_in, fade_out,
     ])
