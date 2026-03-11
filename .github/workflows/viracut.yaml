@@ -1,0 +1,38 @@
+name: VIRACUT
+
+on:
+  workflow_dispatch:
+
+# Supprime les warnings Node.js en forçant la version 24
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install FFmpeg + fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg \
+            fonts-liberation \
+            fontconfig
+          fc-cache -f -v 2>/dev/null
+
+      - name: Run render
+        run: |
+          python3 render.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: viracut-output
+          path: output.mp4
+          retention-days: 7
+          
