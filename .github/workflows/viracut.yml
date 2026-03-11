@@ -3,15 +3,12 @@ name: VIRACUT
 on:
   workflow_dispatch:
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   render:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2   # Node 24 natif — supprime l'avertissement
 
       - name: Install Tools
         run: |
@@ -24,7 +21,7 @@ jobs:
 
       - name: Sauvegarde Video
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.0   # Node 24 natif — supprime l'avertissement
         with:
           name: MaVideo
           path: output.mp4
