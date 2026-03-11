@@ -1,4 +1,4 @@
-Name: VIRACUT
+name: VIRACUT
 
 on:
   workflow_dispatch:
