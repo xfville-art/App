@@ -408,18 +408,20 @@ def build_logo_splash(out, opts):
     Wi, Hi = int(W), int(H)
     dur   = 5.0
 
-    # Tailles police
-    les_sz    = 90
-    crados_sz = 180
-    ai_sz     = 95
+    # Tailles police — calibrees pour ne pas depasser Wi=720px
+    # Liberation Bold : ratio reel ~0.78 par char
+    # CRADOS (6 chars) : 142px * 0.78 * 6 + 2*12(border) = 664 + 24 = 688 => marge ok
+    les_sz    = 78
+    crados_sz = 142
+    ai_sz     = 82
 
     # Positions verticales — bloc centre
-    total_h   = les_sz + 20 + crados_sz + 16 + ai_sz
+    total_h   = les_sz + 18 + crados_sz + 14 + ai_sz
     block_top = (Hi - total_h) // 2
     les_y     = block_top
-    crados_y  = les_y + les_sz + 20
+    crados_y  = les_y + les_sz + 18
     deco_y    = crados_y + crados_sz + 6
-    ai_y      = deco_y + 18
+    ai_y      = deco_y + 16
 
     # Timings phases (fixes)
     t_les  = 0.3
@@ -465,22 +467,22 @@ def build_logo_splash(out, opts):
         f"enable='gte(t,{t_les})'"
     )
 
-    # CRADOS — triple couche chrome, slide depuis le bas (y expr OK)
+    # CRADOS — triple couche chrome, borderw reduits pour rester dans 720px
     dt_crad_glow = (
         f"drawtext=fontfile={FONT}:text='CRADOS':"
-        f"fontsize={crados_sz}:fontcolor=#222222:borderw=22:bordercolor=#111111:"
+        f"fontsize={crados_sz}:fontcolor=#222222:borderw=12:bordercolor=#111111:"
         f"x=(w-text_w)/2:y='{crad_y_expr}':"
         f"enable='gte(t,{t_crad})'"
     )
     dt_crad_mid = (
         f"drawtext=fontfile={FONT}:text='CRADOS':"
-        f"fontsize={crados_sz}:fontcolor=#777777:borderw=9:bordercolor=#333333:"
+        f"fontsize={crados_sz}:fontcolor=#777777:borderw=5:bordercolor=#333333:"
         f"x=(w-text_w)/2:y='{crad_y_expr}':"
         f"enable='gte(t,{t_crad})'"
     )
     dt_crad = (
         f"drawtext=fontfile={FONT}:text='CRADOS':"
-        f"fontsize={crados_sz}:fontcolor=white:borderw=3:bordercolor=#AAAAAA:"
+        f"fontsize={crados_sz}:fontcolor=white:borderw=2:bordercolor=#AAAAAA:"
         f"x=(w-text_w)/2:y='{crad_y_expr}':"
         f"enable='gte(t,{t_crad})'"
     )
@@ -654,12 +656,16 @@ def build_punch_final(segments, texts, opts):
     c_s, c_e = t_map.get("core",  (h_e, h_e + 2.5))
     p_s, p_e = t_map.get("punch", (c_e, total))
 
-    # Layout
-    lb_top = 62; lb_bot = 72; lb_y_b = Hi - lb_bot
+    # Layout — lb_top adaptatif : assez grand pour contenir le texte hook
+    # + marges internes (8px haut et bas)
+    lb_top = hook_sz + 16        # ex: 88+16 = 104px
+    lb_bot = punch_sz + 16       # ex: 64+16 = 80px
+    lb_y_b = Hi - lb_bot
 
     # Animations
     hook_adur  = 0.20
-    hook_y_fin = max(6, lb_top // 2 - hook_sz // 2)
+    hook_y_fin = lb_top // 2 - hook_sz // 2   # centre dans la barre
+    # Pas de max(6,...) — lb_top est maintenant toujours >= hook_sz + 16
     slide_up_y = (
         f"if(lt(t-{h_s:.3f},{hook_adur}),"
         f"-{hook_sz}+(t-{h_s:.3f})/{hook_adur}*({hook_y_fin}+{hook_sz}),"
@@ -820,7 +826,9 @@ def build_cinema_overlay(texts, opts):
     crf    = cfg(opts, "crf"); abr = cfg(opts, "audio_br"); fade = cfg(opts, "fade_dur")
     Wi, Hi = int(W), int(H)
 
-    lb_top = max(lb_h, 80); lb_bot = max(lb_h, 80); lb_y_b = Hi - lb_bot
+    lb_top = hook_sz + 16    # adaptatif : 54+16=70px
+    lb_bot = punch_sz + 16   # adaptatif : 46+16=62px
+    lb_y_b = Hi - lb_bot
     total  = duration("_assembled.mp4")
 
     h_e   = total * 0.20
@@ -833,7 +841,7 @@ def build_cinema_overlay(texts, opts):
 
     hook_sz  = 54; core_sz = 48; punch_sz = 46
     core_y   = int(Hi * 0.72)
-    hook_y   = lb_top // 2 - hook_sz // 2
+    hook_y   = lb_top // 2 - hook_sz // 2    # centre dans barre du haut
     punch_y  = lb_y_b + lb_bot // 2 - punch_sz // 2
 
     # Letterbox permanent
