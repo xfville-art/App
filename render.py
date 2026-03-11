@@ -1,9 +1,9 @@
 """
 render.py — ViraCut Studio v7  ★ LesCrados.Ai Edition ★
 ═══════════════════════════════════════════════════════
-FIX : Zoom réduit (1.04) + Recentrage intelligent
-ADD : Logo "LES CRADOS" discret en haut à droite (30% opacité)
-MODE : Cinéma sans textes (overlay propre)
+FIX : Zoom cinématique réduit (1.04)
+ADD : Filigrane "LES CRADOS" discret haut-droite (30% opacité)
+MODE : Cinéma sans textes IA (overlay propre)
 """
 import json, base64, os, subprocess, urllib.request, urllib.error
 import time, sys, random, hashlib
@@ -23,7 +23,7 @@ DEFAULTS = {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# OUTILS FFmpeg
+# UTILS
 # ═══════════════════════════════════════════════════════════════════════
 def cfg(opts, key):
     return opts.get(key, DEFAULTS[key])
@@ -51,7 +51,7 @@ def has_audio(path):
     return any(s.get("codec_type") == "audio" for s in d.get("streams", []))
 
 # ═══════════════════════════════════════════════════════════════════════
-# LOGO DE FIN (OUTRO) 5s ANIME
+# OUTRO LOGO (5s)
 # ═══════════════════════════════════════════════════════════════════════
 def build_logo_splash(out, opts):
     W, H  = cfg(opts, "resolution").split("x")
@@ -80,11 +80,10 @@ def append_logo(premain, opts):
     run(f'ffmpeg -y -f concat -safe 0 -i _concat_logo.txt -c:v libx264 -pix_fmt yuv420p -crf {cfg(opts, "crf")} output.mp4')
 
 # ═══════════════════════════════════════════════════════════════════════
-# TRAITEMENT VIDÉO (MODES CINÉMA)
+# RENDU CINÉMA
 # ═══════════════════════════════════════════════════════════════════════
 def build_cinema_segment(src, seg_out, clip_dur, kb_zoom, opts):
     W, H = cfg(opts, "resolution").split("x"); fps = cfg(opts, "fps")
-    # Scale decrease + Pad pour garder toute l'image centrée
     scale_crop = f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,fps={fps}"
     grade = "eq=saturation=0.95:brightness=-0.01:contrast=1.05"
     
@@ -119,27 +118,26 @@ def build_cinema_overlay_no_text(opts):
     lb_h = cfg(opts, "cinema_lb_h")
     total = duration("_assembled.mp4")
     
-    # 1. Bandes noires haut/bas
-    # 2. Filigrane "LES CRADOS" discret haut-droite (opacité 0.3)
+    # Bandes noires + Logo discret (30% opacité) en haut à droite
     lb = f"drawbox=y=0:h={lb_h}:c=black@1:t=fill,drawbox=y={Hi-lb_h}:h={lb_h}:c=black@1:t=fill"
-    watermark = f"drawtext=fontfile={FONT}:text='LES CRADOS':fontsize=22:fontcolor=white@0.3:x=w-text_w-30:y=30"
+    logo_watermark = f"drawtext=fontfile={FONT}:text='LES CRADOS':fontsize=22:fontcolor=white@0.3:x=w-text_w-25:y=25"
     
-    vf = f"{lb},{watermark}"
+    vf = f"{lb},{logo_watermark}"
     
     run(f'ffmpeg -y -i _assembled.mp4 -vf "{vf}" -af "afade=t=out:st={total-0.5}:d=0.5" -c:v libx264 -crf {cfg(opts,"crf")} _premain.mp4')
     append_logo("_premain.mp4", opts)
 
 # ═══════════════════════════════════════════════════════════════════════
-# EXECUTION
+# START
 # ═══════════════════════════════════════════════════════════════════════
 def start():
     if not os.path.exists("p.json"): sys.exit(1)
     with open("p.json") as f: data = json.load(f)
     clips_raw = data.get("videos", []); opts = data.get("options", {})
     
-    print("════════════════════════════════════════════════════════")
-    print("  ViraCut v7 -- LesCrados.Ai (LOGO DISCRET + ZOOM FIX)")
-    print("════════════════════════════════════════════════════════")
+    print("=" * 60)
+    print("  ViraCut v7 -- Mode Cinéma (Logo Discret + Zoom 1.04)")
+    print("=" * 60)
     
     raw_paths = []
     for i, v in enumerate(clips_raw):
@@ -160,7 +158,7 @@ def start():
 
     assemble_cinema(seg_paths, xf, opts)
     build_cinema_overlay_no_text(opts)
-    print("\n✅ TERMINÉ : output.mp4 généré.")
+    print("\n✓ Vidéo générée avec succès.")
 
 if __name__ == "__main__":
     start()
