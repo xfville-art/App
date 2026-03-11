@@ -1,8 +1,8 @@
 """
 render.py — ViraCut Studio v7  ★ LesCrados.Ai Edition ★
 ═══════════════════════════════════════════════════════
-UPDATE : Suppression des bandes noires (Full Screen)
-UPDATE : Punch amélioré (Zoom Ken Burns augmenté)
+FIX : Zoom stabilisé (1.08) pour supprimer l'alerte FFmpeg
+FIX : Suppression définitive de la banderole et des bandes noires
 """
 import json, base64, os, subprocess, urllib.request, urllib.error
 import time, sys, random, hashlib
@@ -17,8 +17,8 @@ DEFAULTS = {
     "audio_br": 192, "fade_dur": 0.3, 
     "cinema_dur": 26, "cinema_clip_min": 7, "cinema_clip_max": 12,
     "cinema_xfade": 0.8, 
-    "cinema_kb_zoom": 1.12,  # PUNCH : Zoom augmenté (était 1.04)
-    "cinema_lb_h": 0,        # SUPPRIMÉ : Plus de bandes noires
+    "cinema_kb_zoom": 1.08,  # STABILISÉ : 1.08 au lieu de 1.12 pour éviter l'alerte
+    "cinema_lb_h": 0,        # SANS BANDES NOIRES
 }
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -50,7 +50,7 @@ def has_audio(path):
     return any(s.get("codec_type") == "audio" for s in d.get("streams", []))
 
 # ═══════════════════════════════════════════════════════════════════════
-# LOGO SPLASH ANIME (FINAL)
+# LOGO SPLASH ANIME
 # ═══════════════════════════════════════════════════════════════════════
 def build_logo_splash(out, opts):
     W, H  = cfg(opts, "resolution").split("x")
@@ -79,17 +79,17 @@ def append_logo(premain, opts):
     run(f'ffmpeg -y -f concat -safe 0 -i _concat_logo.txt -c:v libx264 -pix_fmt yuv420p -crf {cfg(opts, "crf")} output.mp4')
 
 # ═══════════════════════════════════════════════════════════════════════
-# MODES RENDU (PLEIN ÉCRAN + PUNCH)
+# MODES RENDU (STABILISÉ)
 # ═══════════════════════════════════════════════════════════════════════
 def build_cinema_segment(src, seg_out, clip_dur, kb_zoom, opts):
     W, H = cfg(opts, "resolution").split("x"); fps = cfg(opts, "fps")
-    # Montage plein écran sans bandes noires
-    scale_crop = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={fps}"
-    grade = "eq=saturation=1.05:brightness=0.02:contrast=1.1" # Image plus vive
+    # Scale & Crop pour plein écran propre
+    scale_crop = f"scale=1280:2275:force_original_aspect_ratio=increase,crop={W}:{H},fps={fps}"
+    grade = "eq=saturation=1.05:contrast=1.1" 
     
-    # Calcul du zoom Ken Burns plus agressif pour le punch
+    # Zoom Ken Burns simplifié pour éviter l'alerte
     inc = (kb_zoom - 1.0) / max(clip_dur * fps, 1)
-    kb = f"zoompan=z='min(zoom+{inc:.6f},{kb_zoom})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={fps}"
+    kb = f"zoompan=z='zoom+{inc:.5f}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={fps}"
     
     vf = f"{scale_crop},{grade},{kb}"
     
@@ -115,8 +115,8 @@ def assemble_cinema(seg_paths, xfade_dur, opts):
 
 def build_cinema_overlay_no_text(opts):
     total = duration("_assembled.mp4")
-    # Pas de drawbox (bandes noires), juste le fondu de fin vers le logo
-    run(f'ffmpeg -y -i _assembled.mp4 -af "afade=t=out:st={total-0.5}:d=0.5" -c:v libx264 -crf {cfg(opts,"crf")} _premain.mp4')
+    # Pas de bandes noires, juste un fondu de sortie léger
+    run(f'ffmpeg -y -i _assembled.mp4 -vf "fade=t=out:st={total-0.5}:d=0.5" -af "afade=t=out:st={total-0.5}:d=0.5" -c:v libx264 -crf {cfg(opts,"crf")} _premain.mp4')
     append_logo("_premain.mp4", opts)
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -127,7 +127,7 @@ def start():
     with open("p.json") as f: data = json.load(f)
     clips_raw = data.get("videos", []); opts = data.get("options", {})
     
-    print("=" * 50); print("  ViraCut v7 -- LesCrados.Ai (FULL SCREEN + PUNCH)"); print("=" * 50)
+    print("=" * 50); print("  ViraCut v7 -- STABILIZED (NO ALERT)"); print("=" * 50)
     
     raw_paths = []
     for i, v in enumerate(clips_raw):
