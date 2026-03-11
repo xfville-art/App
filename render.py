@@ -1,8 +1,8 @@
 """
 render.py — ViraCut Studio v7  ★ LesCrados.Ai Edition ★
 ═══════════════════════════════════════════════════════
-FIX : Zoom réduit (1.04) pour éviter de couper l'image
-FIX : Recentrage amélioré avec padding pour garder tout le visuel
+AJOUT : Banderole "LES CRADOS" style Garbage Pail Kids en haut
+FIX : Zoom réduit (1.04) et Recentrage amélioré
 """
 import json, base64, os, subprocess, urllib.request, urllib.error
 import time, sys, random, hashlib
@@ -17,8 +17,8 @@ DEFAULTS = {
     "audio_br": 192, "fade_dur": 0.3, 
     "cinema_dur": 26, "cinema_clip_min": 7, "cinema_clip_max": 12,
     "cinema_xfade": 0.8, 
-    "cinema_kb_zoom": 1.04,  # ZOOM RÉDUIT ICI (Anciennement 1.10)
-    "cinema_lb_h": 80,
+    "cinema_kb_zoom": 1.04,
+    "cinema_lb_h": 100, # Augmenté légèrement pour la banderole
 }
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -79,15 +79,13 @@ def append_logo(premain, opts):
     run(f'ffmpeg -y -f concat -safe 0 -i _concat_logo.txt -c:v libx264 -pix_fmt yuv420p -crf {cfg(opts, "crf")} output.mp4')
 
 # ═══════════════════════════════════════════════════════════════════════
-# MODES RENDU (CORRIGÉ POUR RECENTRAGE ET ZOOM)
+# MODES RENDU
 # ═══════════════════════════════════════════════════════════════════════
 def build_cinema_segment(src, seg_out, clip_dur, kb_zoom, opts):
     W, H = cfg(opts, "resolution").split("x"); fps = cfg(opts, "fps")
-    # Utilisation de "decrease" pour ne pas couper les bords et "pad" pour recentrer
     scale_crop = f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,fps={fps}"
     grade = "eq=saturation=0.95:brightness=-0.01:contrast=1.05"
     
-    # Calcul de l'incrément de zoom (plus doux)
     inc = (kb_zoom - 1.0) / max(clip_dur * fps, 1)
     kb = f"zoompan=z='min(zoom+{inc:.6f},{kb_zoom})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={fps}"
     
@@ -118,10 +116,22 @@ def build_cinema_overlay_no_text(opts):
     lb_h = cfg(opts, "cinema_lb_h")
     total = duration("_assembled.mp4")
     
+    # --- STYLE GARBAGE PAIL KIDS (Banderole "Les Crados") ---
+    # Jaune vif, bordure noire épaisse et ombre rose fluo pour le look rétro
+    banner_text = "LES CRADOS"
+    gpk_style = (
+        f"drawtext=fontfile={FONT}:text='{banner_text}':fontcolor=yellow:"
+        f"fontsize=70:x=(w-text_w)/2:y=({lb_h}-text_h)/2:"
+        f"bordercolor=black:borderw=5:shadowcolor=#FF00FF:shadowx=4:shadowy=4"
+    )
+    
     # Bandes noires cinématiques
     lb = f"drawbox=y=0:h={lb_h}:c=black@1:t=fill,drawbox=y={Hi-lb_h}:h={lb_h}:c=black@1:t=fill"
     
-    run(f'ffmpeg -y -i _assembled.mp4 -vf "{lb}" -af "afade=t=out:st={total-0.5}:d=0.5" -c:v libx264 -crf {cfg(opts,"crf")} _premain.mp4')
+    # Fusion des filtres : Bandes noires + Texte GPK
+    full_vf = f"{lb},{gpk_style}"
+    
+    run(f'ffmpeg -y -i _assembled.mp4 -vf "{full_vf}" -af "afade=t=out:st={total-0.5}:d=0.5" -c:v libx264 -crf {cfg(opts,"crf")} _premain.mp4')
     append_logo("_premain.mp4", opts)
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -132,7 +142,7 @@ def start():
     with open("p.json") as f: data = json.load(f)
     clips_raw = data.get("videos", []); opts = data.get("options", {})
     
-    print("=" * 50); print("  ViraCut v7 -- LesCrados.Ai (RECENTRAGE + ZOOM FIX)"); print("=" * 50)
+    print("=" * 50); print("  ViraCut v7 -- LesCrados.Ai (STYLE GPK + FIX)"); print("=" * 50)
     
     raw_paths = []
     for i, v in enumerate(clips_raw):
