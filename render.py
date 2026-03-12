@@ -26,7 +26,7 @@ DEFAULTS = {
     "crf":             18,
     "audio_br":        192,
     "fade_dur":        0.3,
-    "cinema_dur":      26,
+    "cinema_dur":      12,
     "cinema_clip_min": 7,
     "cinema_clip_max": 12,
     "cinema_xfade":    0.8,
@@ -43,7 +43,7 @@ DEFAULTS = {
     "dialogue_xfade_max": 1.00,   # xfade long si coupure en silence
 }
 
-MIN_CLIP_DUR = 4.0
+MIN_CLIP_DUR = 1.5
 
 # ═══════════════════════════════════════════════════════════════════════
 # UTILS
@@ -217,31 +217,23 @@ def build_logo_splash(out, opts):
     W, H = cfg(opts, "resolution").split("x")
     fps  = cfg(opts, "fps"); crf = cfg(opts, "crf")
     Wi, Hi = int(W), int(H)
-    dur = 5.0
-    les_sz, crados_sz, ai_sz = 78, 142, 82
-    total_h   = les_sz + 18 + crados_sz + 14 + ai_sz
+    # Outro réduite à 1s — rapide, percutante, ne casse pas le rythme
+    dur = 1.0
+    les_sz, crados_sz, ai_sz = 60, 110, 64
+    total_h   = les_sz + 14 + crados_sz + 10 + ai_sz
     block_top = (Hi - total_h) // 2
     les_y    = block_top
-    crados_y = block_top + les_sz + 18
-    ai_y     = block_top + les_sz + 18 + crados_sz + 22
-
-    crad_y_expr = (
-        f"if(lt(t,0.8),{Hi},"
-        f"if(lt(t-0.8,0.5),{Hi}+({crados_y}-{Hi})*((t-0.8)/0.5),{crados_y}))"
-    )
-    ai_y_expr = (
-        f"if(lt(t,1.7),{Hi},"
-        f"if(lt(t-1.7,0.4),{Hi}+({ai_y}-{Hi})*((t-1.7)/0.4),{ai_y}))"
-    )
+    crados_y = block_top + les_sz + 14
+    ai_y     = block_top + les_sz + 14 + crados_sz + 16
 
     dt_les  = (f"drawtext=fontfile={FONT}:text='LES':fontsize={les_sz}:"
-               f"fontcolor=white:x=(w-text_w)/2:y={les_y}:enable='gte(t,0.3)'")
+               f"fontcolor=white:x=(w-text_w)/2:y={les_y}:enable='gte(t,0)'")
     dt_crad = (f"drawtext=fontfile={FONT}:text='CRADOS':fontsize={crados_sz}:"
-               f"fontcolor=white:x=(w-text_w)/2:y='{crad_y_expr}':enable='gte(t,0.8)'")
+               f"fontcolor=white:x=(w-text_w)/2:y={crados_y}:enable='gte(t,0)'")
     dt_ai   = (f"drawtext=fontfile={FONT}:text='.Ai':fontsize={ai_sz}:"
-               f"fontcolor=#FF2442:x=(w-text_w)/2:y='{ai_y_expr}':enable='gte(t,1.7)'")
+               f"fontcolor=#FF2442:x=(w-text_w)/2:y={ai_y}:enable='gte(t,0)'")
 
-    vf = f"{dt_les},{dt_crad},{dt_ai},fade=t=in:st=0:d=0.5,fade=t=out:st=4.2:d=0.8"
+    vf = f"{dt_les},{dt_crad},{dt_ai},fade=t=in:st=0:d=0.1,fade=t=out:st=0.8:d=0.2"
     run(
         f'ffmpeg -y -f lavfi -i "color=c=black:size={W}x{H}:rate={fps}" '
         f'-f lavfi -i "anullsrc=r=44100:cl=stereo" -t {dur} '
@@ -315,9 +307,12 @@ def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts):
     actual = max(actual, 1.0)  # garde-fou absolu
 
     # ── Filtres video ────────────────────────────────────────────────
+    # Crop intelligent : remplit le 9:16 sans barres noires
+    # 1) scale pour que la plus petite dimension remplisse le cadre
+    # 2) crop centré pour couper les bords excédentaires
     scale_crop = (
-        f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
-        f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,fps={fps}"
+        f"scale={W}:{H}:force_original_aspect_ratio=increase,"
+        f"crop={W}:{H},fps={fps}"
     )
     grade = "eq=saturation=0.95:brightness=-0.01:contrast=1.05"
     inc   = (kb_zoom - 1.0) / max(actual * fps, 1)
@@ -612,7 +607,7 @@ def start():
         print(f"  Ordre clips : séquentiel (pas de recommandation viralité)")
 
     n        = len(raw_paths)
-    target   = cfg(opts, "cinema_dur")
+    target   = min(cfg(opts, "cinema_dur"), 13)  # cap TikTok 13s max
     xf_b     = cfg(opts, "cinema_xfade")
     clip_dur = max((target - xf_b * (n - 1)) / n, MIN_CLIP_DUR)
     print(f"\n  Duree cible/segment : {clip_dur:.2f}s  |  xfade base : {xf_b}s\n")
