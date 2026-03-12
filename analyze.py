@@ -18,19 +18,20 @@ MARKER_END   = "##VIRALITE_JSON_END##"
 
 def call_llm(api_key, prompt):
     """
-    Together AI — $1 offert à l'inscription (~5000 analyses).
-    Modèle : meta-llama/Llama-3.3-70B-Instruct-Turbo (0.00018$/1K tokens)
-    Clé sur : api.together.ai/settings/api-keys
+    GitHub Models — gratuit, zéro blocage (même réseau que Actions).
+    GITHUB_TOKEN automatiquement disponible dans tout workflow Actions.
+    Endpoint : https://models.inference.ai.azure.com
     """
     models = [
-        "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-        "meta-llama/Llama-3.1-8B-Instruct-Turbo",
-        "mistralai/Mixtral-8x7B-Instruct-v0.1",
+        "meta-llama-3.3-70b-instruct",
+        "gpt-4o-mini",
+        "mistral-nemo",
+        "meta-llama-3.1-8b-instruct",
     ]
     last_err = None
     for model in models:
         req = urllib.request.Request(
-            "https://api.together.xyz/v1/chat/completions",
+            "https://models.inference.ai.azure.com/chat/completions",
             data = json.dumps({
                 "model":       model,
                 "messages":    [{"role": "user", "content": prompt}],
@@ -57,7 +58,7 @@ def call_llm(api_key, prompt):
             print(f"  {model} → {e} — essai suivant")
             last_err = e
 
-    raise last_err or Exception("Tous les modèles ont échoué")
+    raise last_err or Exception("Tous les modèles GitHub ont échoué")
 
 
 def main():
@@ -93,9 +94,9 @@ def main():
     current_mode = data.get("current_mode", data.get("options", {}).get("mode", "auto"))
     opts         = data.get("options", {})
 
-    api_key = os.environ.get("TOGETHER_API_KEY", "") or opts.get("together_key", "")
+    api_key = os.environ.get("GITHUB_TOKEN", "")
     if not api_key:
-        print("ERREUR : TOGETHER_API_KEY absent — clé sur api.together.ai/settings/api-keys")
+        print("ERREUR : GITHUB_TOKEN absent (ne devrait jamais arriver dans un workflow Actions)")
         sys.exit(1)
 
     print("=" * 60)
