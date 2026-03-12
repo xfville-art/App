@@ -3,13 +3,17 @@ name: ViraCut Analyze
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  models: read
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
     timeout-minutes: 3
 
     steps:
-      - name: Checkout + pull latest (inclut pa.json uploadé par l'app)
+      - name: Checkout (inclut pa.json uploadé par l'app)
         uses: actions/checkout@v4
         with:
           ref: main
@@ -33,5 +37,5 @@ jobs:
 
       - name: Run viralité analysis
         env:
-          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python analyze.py
