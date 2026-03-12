@@ -30,17 +30,17 @@ DEFAULTS = {
     "cinema_clip_min": 7,
     "cinema_clip_max": 12,
     "cinema_xfade":    0.8,
-    "cinema_kb_zoom":  1.04,
+    "cinema_kb_zoom":  1.015,
     "cinema_lb_h":     80,
 
     # ── Dialogue Cut Engine ─────────────────────────────────────────
     "dialogue_cut":       True,   # activer le snap sur les pauses
-    "dialogue_noise_db":  -35,    # seuil de silence (dBFS)
-    "dialogue_min_pause": 0.10,   # duree min d une pause (s)
-    "dialogue_tolerance": 0.65,   # fenetre +/-s autour de la cible
+    "dialogue_noise_db":  -30,    # seuil de silence (dBFS)
+    "dialogue_min_pause": 0.08,   # duree min d une pause (s)
+    "dialogue_tolerance": 1.0,    # fenetre +/-s autour de la cible
     "dialogue_in_snap":   True,   # snap aussi le point d entree
     "dialogue_xfade_min": 0.25,   # xfade court si coupure en plein dialogue
-    "dialogue_xfade_max": 1.00,   # xfade long si coupure en silence
+    "dialogue_xfade_max": 0.6,    # xfade long si coupure en silence
 }
 
 MIN_CLIP_DUR = 1.5
