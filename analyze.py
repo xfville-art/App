@@ -16,43 +16,49 @@ MARKER_START = "##VIRALITE_JSON_START##"
 MARKER_END   = "##VIRALITE_JSON_END##"
 
 
-def call_gemini(api_key, prompt):
-    """Gemini — essaie plusieurs modèles free tier dans l'ordre."""
+def call_groq(api_key, prompt):
+    """
+    Groq API — 100% gratuit, sans carte bancaire.
+    Modèle : llama-3.3-70b-versatile (6000 req/jour free)
+    Clé sur : console.groq.com/keys
+    """
     models = [
-        "gemini-2.0-flash-lite",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-flash-8b",
-        "gemini-2.0-flash",
+        "llama-3.3-70b-versatile",
+        "llama3-70b-8192",
+        "mixtral-8x7b-32768",
+        "gemma2-9b-it",
     ]
-    payload_obj = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1200}
+    payload_base = {
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.3,
+        "max_tokens": 1200,
+        "response_format": {"type": "json_object"},
     }
     last_err = None
     for model in models:
-        url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{model}:generateContent?key={api_key}"
-        )
+        payload_base["model"] = model
         req = urllib.request.Request(
-            url,
-            data    = json.dumps(payload_obj).encode(),
-            headers = {"Content-Type": "application/json"},
-            method  = "POST"
+            "https://api.groq.com/openai/v1/chat/completions",
+            data    = json.dumps(payload_base).encode(),
+            headers = {
+                "Content-Type":  "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method = "POST"
         )
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 body = json.loads(resp.read().decode())
-            text = body["candidates"][0]["content"]["parts"][0]["text"]
+            text = body["choices"][0]["message"]["content"]
             print(f"  Modèle utilisé : {model}")
             return text
         except urllib.error.HTTPError as e:
             err_body = e.read().decode()
             print(f"  {model} → HTTP {e.code} — essai suivant")
-            last_err = urllib.error.HTTPError(e.url, e.code, err_body, e.headers, None)
+            last_err = Exception(f"HTTP {e.code}: {err_body[:200]}")
             continue
         except Exception as e:
-            print(f"  {model} → erreur : {e} — essai suivant")
+            print(f"  {model} → {e} — essai suivant")
             last_err = e
             continue
     raise last_err
@@ -91,9 +97,9 @@ def main():
     current_mode = data.get("current_mode", data.get("options", {}).get("mode", "auto"))
     opts         = data.get("options", {})
 
-    api_key = os.environ.get("GEMINI_API_KEY", "") or opts.get("gemini_key", "")
+    api_key = os.environ.get("GROQ_API_KEY", "") or opts.get("groq_key", "")
     if not api_key:
-        print("ERREUR : GEMINI_API_KEY absent — ajouter dans Settings > Secrets > Actions")
+        print("ERREUR : GROQ_API_KEY absent — clé gratuite sur console.groq.com/keys")
         sys.exit(1)
 
     print("=" * 60)
@@ -164,9 +170,9 @@ Réponds UNIQUEMENT en JSON valide, zéro texte avant ou après :
     # ── Appel API ────────────────────────────────────────────────────
     print("\n  Appel Claude API…")
     try:
-        raw = call_gemini(api_key, prompt)
-        clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-        result = json.loads(clean)
+        raw = call_groq(api_key, prompt)
+        # Groq json_object mode retourne du JSON propre directement
+        result = json.loads(raw.strip())
     except urllib.error.HTTPError as e:
         body = e.read().decode()
         print(f"ERREUR Gemini API HTTP {e.code} : {body[:500]}")

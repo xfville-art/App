@@ -444,9 +444,9 @@ def viralite_analysis(clips_raw, opts, raw_paths):
     Appelle Gemini 1.5 Flash via GEMINI_API_KEY (env var GitHub Actions).
     Écrit le résultat entre markers dans stdout pour parsing App.html.
     """
-    api_key = os.environ.get("GEMINI_API_KEY", "") or opts.get("gemini_key", "")
+    api_key = os.environ.get("GROQ_API_KEY", "") or opts.get("groq_key", "")
     if not api_key:
-        print("  [Viralité] GEMINI_API_KEY absent — analyse ignorée")
+        print("  [Viralité] GROQ_API_KEY absent — analyse ignorée")
         return
 
     print("\n  [Viralité] Analyse en cours…")
@@ -508,17 +508,22 @@ Réponds UNIQUEMENT en JSON valide, aucun texte avant/après :
         "messages":   [{"role": "user", "content": prompt}]
     }).encode()
 
-    models = ["gemini-2.0-flash-lite","gemini-1.5-flash-latest","gemini-1.5-flash-8b","gemini-2.0-flash"]
-    payload_obj = {"contents":[{"parts":[{"text":prompt}]}],"generationConfig":{"temperature":0.3,"maxOutputTokens":1200}}
+    models = ["llama-3.3-70b-versatile","llama3-70b-8192","mixtral-8x7b-32768","gemma2-9b-it"]
+    payload_base = {"messages":[{"role":"user","content":prompt}],"temperature":0.3,"max_tokens":1200,"response_format":{"type":"json_object"}}
     raw_text = None
     last_err = None
     for model in models:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-        req = urllib.request.Request(url, data=json.dumps(payload_obj).encode(), headers={"Content-Type":"application/json"}, method="POST")
+        payload_base["model"] = model
+        req = urllib.request.Request(
+            "https://api.groq.com/openai/v1/chat/completions",
+            data=json.dumps(payload_base).encode(),
+            headers={"Content-Type":"application/json","Authorization":f"Bearer {api_key}"},
+            method="POST"
+        )
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 body = json.loads(resp.read().decode())
-            raw_text = body["candidates"][0]["content"]["parts"][0]["text"]
+            raw_text = body["choices"][0]["message"]["content"]
             print(f"      Modèle : {model}")
             break
         except Exception as e:
