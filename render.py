@@ -38,7 +38,7 @@ DEFAULTS = {
     "dialogue_noise_db":  -28,    # seuil de silence (dBFS)
     "dialogue_min_pause": 0.08,   # duree min d une pause (s)
     "dialogue_tolerance": 1.5,    # fenetre +/-s autour de la cible
-    "dialogue_in_snap":   True,   # snap aussi le point d entree
+    "dialogue_in_snap":   False,  # désactivé — snap IN coupe le début de l'action
     "dialogue_xfade_min": 0.15,   # xfade court si coupure en plein dialogue
     "dialogue_xfade_max": 0.35,   # xfade long si coupure en silence
 }
@@ -307,25 +307,10 @@ def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts):
     actual = max(actual, 1.0)  # garde-fou absolu
 
     # ── Filtres video ────────────────────────────────────────────────
-    # Scale exact : si déjà 720x1280 → resize direct sans sur-zoom
-    # Si ratio différent (ex: 16:9) → crop centré pour remplir 9:16
-    scale_crop = (
-        f"scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,"
-        f"crop={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}"
-    )
+    # Pas de scale ici — déjà fait en sanitisation à la réception des clips
+    # Uniquement fps et grade colorimétrique
     grade = "eq=saturation=0.95:brightness=-0.01:contrast=1.05"
-    # Ken Burns désactivé — clips AI déjà animés, le zoom supplémentaire
-    # déforme le cadre et écrase les visages
-    # kb_zoom gardé en config pour réactiver si besoin (>1.0)
-    if kb_zoom > 1.001:
-        inc = (kb_zoom - 1.0) / max(actual * fps, 1)
-        kb  = (
-            f"zoompan=z='min(zoom+{inc:.6f},{kb_zoom})':"
-            f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={fps}"
-        )
-        vf = f"{scale_crop},{grade},{kb}"
-    else:
-        vf = f"{scale_crop},{grade}"
+    vf = f"fps={fps},{grade}"
 
     # ── Extraction (avec seek en entree = ultra rapide) ───────────────
     ss_flag = f"-ss {in_pt:.3f}" if in_pt > 0.001 else ""
@@ -367,29 +352,14 @@ def assemble_cinema(segments, opts):
         run(f'cp "{seg_paths[0]}" _assembled.mp4')
         return
 
-    # Normaliser tous les segments au même format exact avant concat
-    normed = []
-    W, H = cfg(opts, "resolution").split("x")
-    fps  = cfg(opts, "fps")
-    crf  = cfg(opts, "crf")
-    for i, p in enumerate(seg_paths):
-        out = f"_norm_{i}.mp4"
-        run(
-            f'ffmpeg -y -i "{p}" '
-            f'-vf "scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{H},setsar=1,fps={fps}" '
-            f'-c:v libx264 -crf {crf} -preset fast -pix_fmt yuv420p '
-            f'-c:a aac -ar 44100 -ac 2 "{out}"'
-        )
-        normed.append(out)
-
-    # Concat direct — cuts nets, zéro artefact
+    crf = cfg(opts, "crf")
+    # Concat direct — clips déjà normalisés à la sanitisation
     with open("_concat.txt", "w") as f:
-        for p in normed:
+        for p in seg_paths:
             f.write(f"file '{p}'\n")
     run(
         f'ffmpeg -y -f concat -safe 0 -i _concat.txt '
-        f'-c:v libx264 -crf {crf} -preset fast -pix_fmt yuv420p '
-        f'-c:a aac _assembled.mp4'
+        f'-c copy _assembled.mp4'
     )
 
 
