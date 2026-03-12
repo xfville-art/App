@@ -358,8 +358,9 @@ def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts):
 
 def assemble_cinema(segments, opts):
     """
-    Assemble les segments — xfade court et propre.
-    Clips AI : déjà animés, un xfade minimal suffit.
+    Assemble les segments en cuts nets (pas de xfade).
+    Le xfade ffmpeg entre clips H264 de sources hétérogènes génère
+    des artefacts pixel (blocs colorés). Cut net = propre et pro.
     """
     seg_paths = [s["path"] for s in segments]
 
@@ -367,34 +368,29 @@ def assemble_cinema(segments, opts):
         run(f'cp "{seg_paths[0]}" _assembled.mp4')
         return
 
-    xf = max(cfg(opts, "cinema_xfade"), 0.1)
-    # Garde-fous : xfade ne peut pas dépasser 40% de chaque clip
-    xf = min(xf, min(duration(p) for p in seg_paths) * 0.4)
-    xf = round(xf, 3)
-
-    inputs   = " ".join(f'-i "{p}"' for p in seg_paths)
-    v_parts, a_parts = [], []
-    offset   = duration(seg_paths[0])
-    prev_v, prev_a = "[0:v]", "[0:a]"
-
-    for i in range(1, len(seg_paths)):
-        is_last = (i == len(seg_paths) - 1)
-        nv = "[vfin]" if is_last else f"[xv{i}]"
-        na = "[afin]" if is_last else f"[xa{i}]"
-
-        offset -= xf
-        v_parts.append(
-            f"{prev_v}[{i}:v]xfade=transition=fade:"
-            f"duration={xf}:offset={max(offset,0):.3f}{nv}"
+    # Normaliser tous les segments au même format exact avant concat
+    normed = []
+    W, H = cfg(opts, "resolution").split("x")
+    fps  = cfg(opts, "fps")
+    crf  = cfg(opts, "crf")
+    for i, p in enumerate(seg_paths):
+        out = f"_norm_{i}.mp4"
+        run(
+            f'ffmpeg -y -i "{p}" '
+            f'-vf "scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{H},setsar=1,fps={fps}" '
+            f'-c:v libx264 -crf {crf} -preset fast -pix_fmt yuv420p '
+            f'-c:a aac -ar 44100 -ac 2 "{out}"'
         )
-        a_parts.append(f"{prev_a}[{i}:a]acrossfade=d={xf}{na}")
-        offset += duration(seg_paths[i])
-        prev_v, prev_a = nv, na
+        normed.append(out)
 
-    fc = ";".join(v_parts + a_parts)
+    # Concat direct — cuts nets, zéro artefact
+    with open("_concat.txt", "w") as f:
+        for p in normed:
+            f.write(f"file '{p}'\n")
     run(
-        f'ffmpeg -y {inputs} -filter_complex "{fc}" '
-        f'-map "[vfin]" -map "[afin]" -c:v libx264 -crf {cfg(opts,"crf")} _assembled.mp4'
+        f'ffmpeg -y -f concat -safe 0 -i _concat.txt '
+        f'-c:v libx264 -crf {crf} -preset fast -pix_fmt yuv420p '
+        f'-c:a aac _assembled.mp4'
     )
 
 
@@ -554,7 +550,7 @@ def start():
         sys.exit(1)
 
     print("=" * 60)
-    print("  ViraCut v9 -- LesCrados.Ai  [DIALOGUE CUT ENGINE]")
+    print("  ViraCut v11 -- LesCrados.Ai  [CONCAT CUT ENGINE]")
     print("=" * 60)
     print(f"  Clips recus        : {len(clips_raw)}")
     print(f"  Dialogue cut       : {cfg(opts,'dialogue_cut')}")
@@ -562,8 +558,7 @@ def start():
     print(f"  Pause min          : {cfg(opts,'dialogue_min_pause')}s")
     print(f"  Tolerance snap     : +/-{cfg(opts,'dialogue_tolerance')}s")
     print(f"  Snap IN            : {cfg(opts,'dialogue_in_snap')}")
-    print(f"  xfade [{cfg(opts,'dialogue_xfade_min')}-"
-          f"{cfg(opts,'dialogue_xfade_max')}]s adaptatif")
+    print(f"  xfade dialogue  : {cfg(opts,'dialogue_xfade_min')}-{cfg(opts,'dialogue_xfade_max')}s")
 
     # Decodage des clips
     raw_paths = []
@@ -618,7 +613,7 @@ def start():
         segments.append(seg)
 
     print(f"\n{'─'*55}")
-    print("  [Assemblage xfade adaptatif]")
+    print("  [Assemblage cuts nets — concat direct]")
     assemble_cinema(segments, opts)
 
     print("\n  [Overlay cinema + Logo splash]")
