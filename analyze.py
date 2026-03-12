@@ -1,0 +1,159 @@
+"""
+analyze.py — ViraCut Studio v10  ★ LesCrados.Ai Edition ★
+══════════════════════════════════════════════════════════
+Analyse de viralité PRÉ-RENDU via Claude API.
+Lit pa.json (métadonnées clips, config actuelle).
+Retourne un JSON entre markers avec :
+  - score global 0-100
+  - 5 axes détaillés
+  - recommandations
+  - recommended_config : mode, durées, effets, ordre clips
+"""
+import json, os, sys, urllib.request, urllib.error
+
+MARKER_START = "##VIRALITE_JSON_START##"
+MARKER_END   = "##VIRALITE_JSON_END##"
+
+
+def call_claude(api_key, prompt):
+    payload = json.dumps({
+        "model":      "claude-sonnet-4-20250514",
+        "max_tokens": 1200,
+        "messages":   [{"role": "user", "content": prompt}]
+    }).encode()
+
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data    = payload,
+        headers = {
+            "Content-Type":      "application/json",
+            "x-api-key":         api_key,
+            "anthropic-version": "2023-06-01",
+        },
+        method = "POST"
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        body = json.loads(resp.read().decode())
+    return "".join(b.get("text","") for b in body.get("content",[]))
+
+
+def main():
+    # ── Lecture pa.json ──────────────────────────────────────────────
+    if not os.path.exists("pa.json"):
+        print("ERREUR : pa.json introuvable")
+        sys.exit(1)
+
+    with open("pa.json") as f:
+        data = json.load(f)
+
+    clips_meta   = data.get("clips_meta", [])
+    current_mode = data.get("current_mode", "auto")
+    opts         = data.get("options", {})
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "") or opts.get("anthropic_key", "")
+    if not api_key:
+        print("ERREUR : ANTHROPIC_API_KEY absent — analyse impossible")
+        sys.exit(1)
+
+    print("=" * 60)
+    print("  ViraCut Analyze v10 — LesCrados.Ai")
+    print("=" * 60)
+    print(f"  Clips         : {len(clips_meta)}")
+    print(f"  Mode actuel   : {current_mode.upper()}")
+
+    # ── Prompt Claude ────────────────────────────────────────────────
+    clips_desc = "\n".join(
+        f"  Clip {c['index']} — rôle={c['role']} taille={c['size_mb']}MB nom={c['name']}"
+        for c in clips_meta
+    )
+
+    prompt = f"""Tu es un expert TikTok spécialisé dans Les Crados (cartes satiriques absurdes style Garbage Pail Kids, public français, format 9:16).
+
+Analyse ces clips AVANT montage et optimise la config pour maximiser la rétention TikTok.
+
+CLIPS ({len(clips_meta)}) :
+{clips_desc}
+
+CONFIG ACTUELLE :
+- Mode : {current_mode.upper()}
+- Hook dur : {opts.get('hook_dur', 2)}s
+- Core dur : {opts.get('core_dur', 2.5)}s
+- Punch dur : {opts.get('punch_dur', 3)}s
+- Flash cut : {opts.get('flash_cut', True)}
+- Zoom punch : {opts.get('zoom_punch', True)}
+- Textes IA : {opts.get('ai_text', True)}
+- Résolution : {opts.get('resolution', '720x1280')}
+
+RÈGLES Les Crados TikTok :
+- Durée idéale : 7-9s pour PUNCH, 20-26s pour CINÉMA
+- Hook doit accrocher en 1.5-2s max (image choc, texte percutant)
+- Le clip le plus visuellement fort = hook
+- Punchline = dernier clip, doit être absurde/choquant
+- Loop parfait = fin qui rappelle le début
+- Flash cut + zoom punch = essentiels pour le PUNCH
+- Si 1 seul clip : mode CINÉMA obligatoire
+
+Réponds UNIQUEMENT en JSON valide, zéro texte avant ou après :
+{{
+  "score": <entier 0-100>,
+  "axes": [
+    {{"name": "Structure", "score": <0-100>}},
+    {{"name": "Rythme",    "score": <0-100>}},
+    {{"name": "Loop",      "score": <0-100>}},
+    {{"name": "Diversité", "score": <0-100>}},
+    {{"name": "Format",    "score": <0-100>}}
+  ],
+  "recs": [
+    {{"type": "pos", "text": "<point fort concis max 60 chars>"}},
+    {{"type": "neg", "text": "<point faible concis max 60 chars>"}},
+    {{"type": "tip", "text": "<conseil actionnable max 60 chars>"}}
+  ],
+  "recommended_config": {{
+    "mode": "<auto|punch|cinema>",
+    "hook_dur": <float>,
+    "core_dur": <float>,
+    "punch_dur": <float>,
+    "flash_cut": <bool>,
+    "zoom_punch": <bool>,
+    "ai_text": <bool>,
+    "clip_order": [<indices 0-based dans le meilleur ordre hook→core→punch>]
+  }}
+}}"""
+
+    # ── Appel API ────────────────────────────────────────────────────
+    print("\n  Appel Claude API…")
+    try:
+        raw = call_claude(api_key, prompt)
+        clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        result = json.loads(clean)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        print(f"ERREUR API HTTP {e.code} : {body}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"ERREUR : {e}")
+        sys.exit(1)
+
+    # ── Affichage résultat ───────────────────────────────────────────
+    print(f"\n  Score viralité : {result.get('score', '?')}/100")
+    for ax in result.get("axes", []):
+        print(f"    {ax['name']:12s}: {ax['score']}")
+    rc = result.get("recommended_config", {})
+    print(f"\n  Config recommandée :")
+    print(f"    Mode       : {rc.get('mode','?').upper()}")
+    print(f"    Hook/Core/Punch : {rc.get('hook_dur','?')}s / {rc.get('core_dur','?')}s / {rc.get('punch_dur','?')}s")
+    print(f"    Ordre clips : {rc.get('clip_order','?')}")
+    print(f"    Flash={rc.get('flash_cut','?')}  Zoom={rc.get('zoom_punch','?')}  Textes={rc.get('ai_text','?')}")
+    for r in result.get("recs", []):
+        icon = "✓" if r['type']=='pos' else ("✗" if r['type']=='neg' else "→")
+        print(f"    {icon} {r['text']}")
+
+    # ── Markers pour parsing App.html ────────────────────────────────
+    print(f"\n{MARKER_START}")
+    print(json.dumps(result, ensure_ascii=False))
+    print(f"{MARKER_END}")
+    print("\n  Analyse terminée.")
+
+
+if __name__ == "__main__":
+    main()
