@@ -34,7 +34,7 @@ DEFAULTS = {
     "cinema_lb_h":     80,
 
     # ── Dialogue Cut Engine ─────────────────────────────────────────
-    "dialogue_cut":       True,   # activer le snap sur les pauses
+    "dialogue_cut":       False,  # OFF — clips AI sans pauses audio détectables
     "dialogue_noise_db":  -28,    # seuil de silence (dBFS)
     "dialogue_min_pause": 0.08,   # duree min d une pause (s)
     "dialogue_tolerance": 1.5,    # fenetre +/-s autour de la cible
@@ -540,12 +540,13 @@ def start():
         p   = f"_raw_{i}.mp4"
         with open(raw, "wb") as f:
             f.write(base64.b64decode(v["data"]))
-        # Re-encode immédiat : GOP fixe, pas de B-frames, yuv420p propre
-        # PAS de scale ici — build_cinema_segment s'en charge
+        # Re-encode : scale 9:16 + GOP fixe + pas de B-frames
         run(
             f'ffmpeg -y -i "{raw}" '
+            f'-vf "scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,'
+            f'crop={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}" '
             f'-c:v libx264 -crf {crf} -preset fast -pix_fmt yuv420p '
-            f'-x264opts "keyint=24:no-scenecut" '
+            f'-x264opts "keyint={fps}:no-scenecut" '
             f'-bf 0 -c:a aac -ar 44100 -ac 2 "{p}"'
         )
         d = duration(p)
