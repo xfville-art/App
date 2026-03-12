@@ -20,7 +20,7 @@ def call_gemini(api_key, prompt):
     """Gemini 1.5 Flash — gratuit, 15 req/min, 1M tokens/jour."""
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-1.5-flash:generateContent?key={api_key}"
+        f"gemini-2.0-flash:generateContent?key={api_key}"
     )
     payload = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
