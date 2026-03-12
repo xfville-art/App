@@ -1,10 +1,14 @@
 """
-render.py — ViraCut Studio v8  ★ LesCrados.Ai Edition ★
+render.py — ViraCut Studio v9  ★ LesCrados.Ai Edition ★
 ═══════════════════════════════════════════════════════
-v8 : Robustesse renforcée — gestion audio unifiée, clip_dur plancher,
-     fallback si un segment échoue, meilleur logging
+v9 : DIALOGUE CUT ENGINE
+     — silencedetect FFmpeg pour trouver les pauses naturelles
+     — snap OUT : raccord à la pause la plus proche de la cible
+     — snap IN  : entrée après la première pause (pas de mot coupé)
+     — xfade adaptatif : durée ajustée selon contexte audio
+     — fallback propre si pas d'audio / pas de silence trouvé
 """
-import json, base64, os, subprocess, sys, time
+import json, base64, os, subprocess, sys, re
 
 # ═══════════════════════════════════════════════════════════════════════
 # CONFIG
@@ -12,15 +16,30 @@ import json, base64, os, subprocess, sys, time
 FONT = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 
 DEFAULTS = {
-    "mode": "auto", "resolution": "720x1280", "fps": 24, "crf": 18,
-    "audio_br": 192, "fade_dur": 0.3,
-    "cinema_dur": 26, "cinema_clip_min": 7, "cinema_clip_max": 12,
-    "cinema_xfade": 0.8,
-    "cinema_kb_zoom": 1.04,
-    "cinema_lb_h": 80,
+    "mode":            "auto",
+    "resolution":      "720x1280",
+    "fps":             24,
+    "crf":             18,
+    "audio_br":        192,
+    "fade_dur":        0.3,
+    "cinema_dur":      26,
+    "cinema_clip_min": 7,
+    "cinema_clip_max": 12,
+    "cinema_xfade":    0.8,
+    "cinema_kb_zoom":  1.04,
+    "cinema_lb_h":     80,
+
+    # ── Dialogue Cut Engine ─────────────────────────────────────────
+    "dialogue_cut":       True,   # activer le snap sur les pauses
+    "dialogue_noise_db":  -35,    # seuil de silence (dBFS)
+    "dialogue_min_pause": 0.10,   # duree min d une pause (s)
+    "dialogue_tolerance": 0.65,   # fenetre +/-s autour de la cible
+    "dialogue_in_snap":   True,   # snap aussi le point d entree
+    "dialogue_xfade_min": 0.25,   # xfade court si coupure en plein dialogue
+    "dialogue_xfade_max": 1.00,   # xfade long si coupure en silence
 }
 
-MIN_CLIP_DUR = 4.0   # durée plancher par segment (s)
+MIN_CLIP_DUR = 4.0
 
 # ═══════════════════════════════════════════════════════════════════════
 # UTILS
@@ -52,8 +71,143 @@ def has_audio(path):
     d = ffprobe(path)
     return any(s.get("codec_type") == "audio" for s in d.get("streams", []))
 
+
 # ═══════════════════════════════════════════════════════════════════════
-# LOGO SPLASH ANIMÉ
+# DIALOGUE CUT ENGINE
+# ═══════════════════════════════════════════════════════════════════════
+
+def detect_silences(path, noise_db=-35, min_dur=0.10):
+    """
+    Detecte les intervalles de silence dans l audio d un clip.
+    Retourne [(start, end), ...] trie par start.
+    Retourne [] si pas d audio ou si FFmpeg echoue.
+    """
+    if not has_audio(path):
+        return []
+    cmd = (
+        f'ffmpeg -i "{path}" '
+        f'-af "silencedetect=noise={noise_db}dB:d={min_dur}" '
+        f'-f null - 2>&1'
+    )
+    r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    output = r.stdout + r.stderr
+
+    silences = []
+    pending_start = None
+    for line in output.splitlines():
+        m = re.search(r'silence_start:\s*([\d.]+)', line)
+        if m:
+            pending_start = float(m.group(1))
+        m = re.search(r'silence_end:\s*([\d.]+)', line)
+        if m and pending_start is not None:
+            silences.append((pending_start, float(m.group(1))))
+            pending_start = None
+
+    return sorted(silences, key=lambda x: x[0])
+
+
+def find_cut_out(silences, target, clip_max, tolerance):
+    """
+    Trouve le meilleur point de coupe OUT.
+
+    Priorite :
+      1. Midpoint de la pause la plus proche de target (dans +/-tolerance)
+      2. End-edge de la pause si mid depasse clip_max
+      3. Start-edge de la pause
+      4. target brut (fallback)
+
+    Retourne (cut_time, label). cut_time est toujours <= clip_max.
+    """
+    window_lo = target - tolerance
+    window_hi = target + tolerance
+
+    # Construire les candidats : silences qui chevauchent la fenetre
+    candidates = []
+    for (s, e) in silences:
+        if e < window_lo or s > window_hi:
+            continue
+        mid  = (s + e) / 2.0
+        dist = abs(mid - target)
+        candidates.append((dist, mid, s, e))
+    candidates.sort(key=lambda x: x[0])
+
+    for (dist, mid, s, e) in candidates:
+        if mid <= clip_max:
+            print(f"      snap OUT -> silence mid  {mid:.3f}s  "
+                  f"[{s:.2f}-{e:.2f}]  delta={dist:.3f}s")
+            return mid, "silence_mid"
+        if e <= clip_max:
+            print(f"      snap OUT -> silence end  {e:.3f}s  "
+                  f"[{s:.2f}-{e:.2f}]")
+            return e, "silence_end"
+        if s >= 0.5:
+            cut = min(s, clip_max)
+            print(f"      snap OUT -> silence start {cut:.3f}s  "
+                  f"[{s:.2f}-{e:.2f}]")
+            return cut, "silence_start"
+
+    cut = min(target, clip_max)
+    print(f"      snap OUT -> fallback {cut:.3f}s  "
+          f"(aucun silence dans +/-{tolerance}s)")
+    return cut, "fallback"
+
+
+def find_cut_in(silences, src_dur, min_in=0.20, tolerance=0.40):
+    """
+    Trouve le meilleur point d entree IN.
+    Cherche la fin de la premiere pause dans [0, min_in+tolerance]
+    pour demarrer proprement apres un silence d intro.
+    Retourne (in_time, label).
+    """
+    window_hi = min_in + tolerance
+    for (s, e) in silences:
+        if s > window_hi:
+            break
+        candidate = min(e, window_hi)
+        if candidate > 0.05:
+            print(f"      snap IN  -> {candidate:.3f}s  "
+                  f"(debut apres pause [{s:.2f}-{e:.2f}])")
+            return candidate, "silence_end"
+
+    print(f"      snap IN  -> 0.000s  (fallback)")
+    return 0.0, "fallback"
+
+
+def is_in_speech(silences, t, margin=0.12):
+    """
+    Retourne True si t est en plein discours
+    (loin de toute pause de plus de margin s).
+    """
+    for (s, e) in silences:
+        if (s - margin) <= t <= (e + margin):
+            return False
+    return True
+
+
+def adaptive_xfade(out_silences, in_silences, cut_out_t, xf_base, xf_min, xf_max):
+    """
+    Calcule la duree de xfade optimale pour une transition.
+
+    - discours -> discours  : coupe seche (xf_min) — TikTok-style
+    - silence  -> silence   : fondu doux  (xf_max) — cinematique
+    - mixte                 : xf_base
+    """
+    out_speech = is_in_speech(out_silences, cut_out_t, margin=0.12)
+    in_speech  = (len(in_silences) == 0 or in_silences[0][0] > 0.20)
+
+    if out_speech and in_speech:
+        xf, lbl = xf_min, "cut sec (discours->discours)"
+    elif not out_speech and not in_speech:
+        xf, lbl = xf_max, "fondu long (pause->pause)"
+    else:
+        xf, lbl = xf_base, "xfade standard (mixte)"
+
+    print(f"      xfade adaptatif : {xf:.2f}s  [{lbl}]")
+    return xf
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# LOGO SPLASH ANIME
 # ═══════════════════════════════════════════════════════════════════════
 def build_logo_splash(out, opts):
     W, H = cfg(opts, "resolution").split("x")
@@ -100,65 +254,151 @@ def append_logo(premain, opts):
         f'-c:v libx264 -pix_fmt yuv420p -crf {cfg(opts, "crf")} output.mp4'
     )
 
-# ═══════════════════════════════════════════════════════════════════════
-# SEGMENTS CINÉMA
-# ═══════════════════════════════════════════════════════════════════════
-def build_cinema_segment(src, seg_out, clip_dur, kb_zoom, opts):
-    W, H = cfg(opts, "resolution").split("x")
-    fps  = cfg(opts, "fps")
-    crf  = cfg(opts, "crf")
 
-    # Recadrage + padding → pas de bord coupé
+# ═══════════════════════════════════════════════════════════════════════
+# SEGMENTS CINEMA + DIALOGUE SNAP
+# ═══════════════════════════════════════════════════════════════════════
+def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts):
+    """
+    Extrait un segment depuis src avec :
+      - snap IN  : point d entree apres la premiere pause audio
+      - snap OUT : point de sortie cale sur la pause la plus proche
+      - Ken Burns + grade + pad sans coupure de bords
+    Retourne un dict avec les metadonnees du segment.
+    """
+    W, H    = cfg(opts, "resolution").split("x")
+    fps     = cfg(opts, "fps")
+    crf     = cfg(opts, "crf")
+    src_dur = duration(src)
+
+    use_dialogue = cfg(opts, "dialogue_cut")
+    noise_db     = cfg(opts, "dialogue_noise_db")
+    min_pause    = cfg(opts, "dialogue_min_pause")
+    tolerance    = cfg(opts, "dialogue_tolerance")
+    do_in_snap   = cfg(opts, "dialogue_in_snap")
+
+    # ── Detection des silences ───────────────────────────────────────
+    silences = detect_silences(src, noise_db, min_pause) if use_dialogue else []
+    if silences:
+        print(f"      Silences detectes : {len(silences)}"
+              f"  (1er: [{silences[0][0]:.2f}-{silences[0][1]:.2f}]s)")
+    else:
+        print(f"      Aucun silence (seuil {noise_db}dB min {min_pause}s) -> cut brut")
+
+    # ── Snap IN ──────────────────────────────────────────────────────
+    if use_dialogue and do_in_snap and silences:
+        in_pt, in_lbl = find_cut_in(silences, src_dur)
+    else:
+        in_pt, in_lbl = 0.0, "disabled"
+
+    # Recalibrer les silences en coordonnees locales (apres in_pt)
+    local_silences = []
+    for (s, e) in silences:
+        ls = s - in_pt
+        le = e - in_pt
+        if le > 0 and ls < target_dur + tolerance:
+            local_silences.append((max(0.0, ls), le))
+
+    # ── Snap OUT ─────────────────────────────────────────────────────
+    clip_max = max(src_dur - in_pt, 1.0)
+
+    if use_dialogue and local_silences:
+        actual, out_lbl = find_cut_out(local_silences, target_dur, clip_max, tolerance)
+    else:
+        actual  = min(target_dur, clip_max)
+        out_lbl = "no_silence"
+
+    actual = max(actual, 1.0)  # garde-fou absolu
+
+    # ── Filtres video ────────────────────────────────────────────────
     scale_crop = (
         f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
         f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,fps={fps}"
     )
     grade = "eq=saturation=0.95:brightness=-0.01:contrast=1.05"
-
-    # Ken Burns doux
-    inc = (kb_zoom - 1.0) / max(clip_dur * fps, 1)
-    kb  = (
+    inc   = (kb_zoom - 1.0) / max(actual * fps, 1)
+    kb    = (
         f"zoompan=z='min(zoom+{inc:.6f},{kb_zoom})':"
         f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={fps}"
     )
-
     vf = f"{scale_crop},{grade},{kb}"
 
-    src_dur = duration(src)
-    actual  = min(clip_dur, src_dur)   # ne jamais dépasser la durée réelle
+    # ── Extraction (avec seek en entree = ultra rapide) ───────────────
+    ss_flag = f"-ss {in_pt:.3f}" if in_pt > 0.001 else ""
 
     if has_audio(src):
         run(
-            f'ffmpeg -y -t {actual:.2f} -i "{src}" '
+            f'ffmpeg -y {ss_flag} -t {actual:.3f} -i "{src}" '
             f'-vf "{vf}" -c:v libx264 -crf {crf} -c:a aac -shortest "{seg_out}"'
         )
     else:
         run(
-            f'ffmpeg -y -t {actual:.2f} -i "{src}" '
+            f'ffmpeg -y {ss_flag} -t {actual:.3f} -i "{src}" '
             f'-f lavfi -i "anullsrc=r=44100:cl=stereo" '
-            f'-filter_complex "[0:v]{vf}[v];[1:a]atrim=0:{actual:.2f}[a]" '
+            f'-filter_complex "[0:v]{vf}[v];[1:a]atrim=0:{actual:.3f}[a]" '
             f'-map "[v]" -map "[a]" -c:v libx264 -crf {crf} "{seg_out}"'
         )
 
-def assemble_cinema(seg_paths, xfade_dur, opts):
+    print(f"      => in={in_pt:.3f}s  out={in_pt+actual:.3f}s  "
+          f"dur={actual:.3f}s  [{in_lbl} / {out_lbl}]")
+
+    return {
+        "path":     seg_out,
+        "in_pt":    in_pt,
+        "out_pt":   in_pt + actual,
+        "dur":      actual,
+        "silences": local_silences,
+    }
+
+
+def assemble_cinema(segments, opts):
+    """
+    Assemble les segments avec xfade adaptatif par transition.
+    """
+    seg_paths = [s["path"] for s in segments]
+
     if len(seg_paths) == 1:
         run(f'cp "{seg_paths[0]}" _assembled.mp4')
         return
 
-    inputs  = " ".join(f'-i "{p}"' for p in seg_paths)
+    xf_base = cfg(opts, "cinema_xfade")
+    xf_min  = cfg(opts, "dialogue_xfade_min")
+    xf_max  = cfg(opts, "dialogue_xfade_max")
+    use_dlg = cfg(opts, "dialogue_cut")
+
+    inputs   = " ".join(f'-i "{p}"' for p in seg_paths)
     v_parts, a_parts = [], []
-    offset  = duration(seg_paths[0]) - xfade_dur
+    offset   = duration(seg_paths[0])
     prev_v, prev_a = "[0:v]", "[0:a]"
 
     for i in range(1, len(seg_paths)):
         is_last = (i == len(seg_paths) - 1)
         nv = "[vfin]" if is_last else f"[xv{i}]"
         na = "[afin]" if is_last else f"[xa{i}]"
+
+        out_sil    = segments[i - 1]["silences"]
+        in_sil     = segments[i]["silences"]
+        cut_out_t  = segments[i - 1]["dur"]
+
+        if use_dlg:
+            print(f"\n  [Transition {i-1}->{i}]")
+            xf = adaptive_xfade(out_sil, in_sil, cut_out_t, xf_base, xf_min, xf_max)
+        else:
+            xf = xf_base
+
+        # Garde-fous : xfade ne peut pas depasser 80% de chaque clip
+        xf = min(xf,
+                 duration(seg_paths[i - 1]) * 0.8,
+                 duration(seg_paths[i]) * 0.8)
+        xf = max(xf, 0.10)
+
+        offset -= xf
         v_parts.append(
-            f"{prev_v}[{i}:v]xfade=transition=fade:duration={xfade_dur}:offset={offset:.3f}{nv}"
+            f"{prev_v}[{i}:v]xfade=transition=fade:"
+            f"duration={xf:.3f}:offset={offset:.3f}{nv}"
         )
-        a_parts.append(f"{prev_a}[{i}:a]acrossfade=d={xfade_dur}{na}")
-        offset  += duration(seg_paths[i]) - xfade_dur
+        a_parts.append(f"{prev_a}[{i}:a]acrossfade=d={xf:.3f}{na}")
+        offset  += duration(seg_paths[i])
         prev_v, prev_a = nv, na
 
     fc = ";".join(v_parts + a_parts)
@@ -167,11 +407,12 @@ def assemble_cinema(seg_paths, xfade_dur, opts):
         f'-map "[vfin]" -map "[afin]" -c:v libx264 -crf {cfg(opts,"crf")} _assembled.mp4'
     )
 
+
 def build_cinema_overlay_no_text(opts):
-    W, H = cfg(opts, "resolution").split("x")
-    Hi   = int(H)
-    lb_h = cfg(opts, "cinema_lb_h")
-    total = duration("_assembled.mp4")
+    W, H    = cfg(opts, "resolution").split("x")
+    Hi      = int(H)
+    lb_h    = cfg(opts, "cinema_lb_h")
+    total   = duration("_assembled.mp4")
     fade_st = max(0.0, total - 0.5)
 
     lb = (
@@ -184,6 +425,7 @@ def build_cinema_overlay_no_text(opts):
         f'-c:v libx264 -crf {cfg(opts,"crf")} _premain.mp4'
     )
     append_logo("_premain.mp4", opts)
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # ENTRY POINT
@@ -203,45 +445,56 @@ def start():
         print("ERREUR : aucun clip dans p.json")
         sys.exit(1)
 
-    print("=" * 55)
-    print("  ViraCut v8 — LesCrados.Ai  (STABLE BUILD)")
-    print("=" * 55)
-    print(f"  Clips reçus : {len(clips_raw)}")
+    print("=" * 60)
+    print("  ViraCut v9 -- LesCrados.Ai  [DIALOGUE CUT ENGINE]")
+    print("=" * 60)
+    print(f"  Clips recus        : {len(clips_raw)}")
+    print(f"  Dialogue cut       : {cfg(opts,'dialogue_cut')}")
+    print(f"  Bruit seuil        : {cfg(opts,'dialogue_noise_db')} dBFS")
+    print(f"  Pause min          : {cfg(opts,'dialogue_min_pause')}s")
+    print(f"  Tolerance snap     : +/-{cfg(opts,'dialogue_tolerance')}s")
+    print(f"  Snap IN            : {cfg(opts,'dialogue_in_snap')}")
+    print(f"  xfade [{cfg(opts,'dialogue_xfade_min')}-"
+          f"{cfg(opts,'dialogue_xfade_max')}]s adaptatif")
 
-    # Décodage des clips
+    # Decodage des clips
     raw_paths = []
     for i, v in enumerate(clips_raw):
         p = f"_raw_{i}.mp4"
         with open(p, "wb") as f:
             f.write(base64.b64decode(v["data"]))
         d = duration(p)
-        print(f"  Clip {i} : {d:.2f}s")
+        print(f"  Clip {i} : {d:.2f}s  audio={has_audio(p)}")
         raw_paths.append(p)
 
-    n      = len(raw_paths)
-    target = cfg(opts, "cinema_dur")
-    xf     = cfg(opts, "cinema_xfade")
-
-    # Durée par segment, avec plancher MIN_CLIP_DUR
-    clip_dur = max((target - xf * (n - 1)) / n, MIN_CLIP_DUR)
-    print(f"  Durée/segment : {clip_dur:.2f}s  |  xfade : {xf}s")
+    n        = len(raw_paths)
+    target   = cfg(opts, "cinema_dur")
+    xf_b     = cfg(opts, "cinema_xfade")
+    clip_dur = max((target - xf_b * (n - 1)) / n, MIN_CLIP_DUR)
+    print(f"\n  Duree cible/segment : {clip_dur:.2f}s  |  xfade base : {xf_b}s\n")
 
     # Rendu des segments
-    seg_paths = []
+    segments = []
     for i, src in enumerate(raw_paths):
         out = f"_cin_{i}.mp4"
-        print(f"\n[Segment {i+1}/{n}]")
-        build_cinema_segment(src, out, clip_dur, cfg(opts, "cinema_kb_zoom"), opts)
-        seg_paths.append(out)
+        print(f"{'─'*55}")
+        print(f"  [Segment {i+1}/{n}]")
+        seg = build_cinema_segment(src, out, clip_dur,
+                                   cfg(opts, "cinema_kb_zoom"), opts)
+        segments.append(seg)
 
-    print("\n[Assemblage]")
-    assemble_cinema(seg_paths, xf, opts)
+    print(f"\n{'─'*55}")
+    print("  [Assemblage xfade adaptatif]")
+    assemble_cinema(segments, opts)
 
-    print("\n[Overlay + Logo]")
+    print("\n  [Overlay cinema + Logo splash]")
     build_cinema_overlay_no_text(opts)
 
     size = os.path.getsize("output.mp4") / 1024 / 1024
-    print(f"\n✓ DONE : output.mp4  ({size:.1f} MB)")
+    print(f"\n{'='*60}")
+    print(f"  OK  output.mp4   {size:.1f} MB")
+    print(f"{'='*60}")
+
 
 if __name__ == "__main__":
     start()
