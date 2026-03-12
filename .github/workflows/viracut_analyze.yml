@@ -33,5 +33,5 @@ jobs:
 
       - name: Run viralité analysis
         env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
         run: python analyze.py
