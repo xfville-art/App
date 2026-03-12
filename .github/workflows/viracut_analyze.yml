@@ -9,7 +9,22 @@ jobs:
     timeout-minutes: 3
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout + pull latest (inclut pa.json uploadé par l'app)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Vérifier pa.json présent
+        run: |
+          echo "Fichiers à la racine :"
+          ls -la
+          if [ ! -f pa.json ]; then
+            echo "ERREUR : pa.json introuvable après checkout"
+            exit 1
+          fi
+          echo "pa.json trouvé ✓"
+          cat pa.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(f'  Clips : {len(d.get(\"clips_meta\",[]))}')"
 
       - name: Setup Python
         uses: actions/setup-python@v5
