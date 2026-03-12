@@ -588,6 +588,29 @@ def start():
         print(f"  Clip {i} : {d:.2f}s  audio={has_audio(p)}")
         raw_paths.append(p)
 
+    # ── Appliquer l'ordre optimal recommandé par l'analyse viralité ──
+    clip_order = opts.get("clip_order")
+    if not clip_order:
+        # Chercher dans pa.json si disponible
+        if os.path.exists("pa.json"):
+            try:
+                with open("pa.json") as _f:
+                    _pa = json.load(_f)
+                rc = _pa.get("options", {}).get("recommended_config", {})
+                clip_order = rc.get("clip_order")
+            except Exception:
+                pass
+    if clip_order and isinstance(clip_order, list) and len(clip_order) == len(raw_paths):
+        # Valider les indices
+        if sorted(clip_order) == list(range(len(raw_paths))):
+            raw_paths  = [raw_paths[i]  for i in clip_order]
+            clips_raw  = [clips_raw[i]  for i in clip_order]
+            print(f"  Ordre viralité appliqué : {clip_order}")
+        else:
+            print(f"  Ordre viralité ignoré (indices invalides) : {clip_order}")
+    else:
+        print(f"  Ordre clips : séquentiel (pas de recommandation viralité)")
+
     n        = len(raw_paths)
     target   = cfg(opts, "cinema_dur")
     xf_b     = cfg(opts, "cinema_xfade")
