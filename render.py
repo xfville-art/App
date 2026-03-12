@@ -600,7 +600,7 @@ def start():
 
     n        = len(raw_paths)
     target   = min(cfg(opts, "cinema_dur"), 13)  # cap TikTok 13s max
-    xf_b     = cfg(opts, "cinema_xfade")
+    xf_b     = 0.2   # HARDCODE — ignore p.json (évite glitch xfade)
     clip_dur = max((target - xf_b * (n - 1)) / n, MIN_CLIP_DUR)
     print(f"\n  Duree cible/segment : {clip_dur:.2f}s  |  xfade base : {xf_b}s\n")
 
@@ -614,7 +614,7 @@ def start():
         print(f"{'─'*55}")
         print(f"  [Segment {i+1}/{n}]")
         seg = build_cinema_segment(src, out, clip_dur,
-                                   cfg(opts, "cinema_kb_zoom"), opts)
+                                   1.0, opts)  # HARDCODE kb_zoom=1.0 — pas de zoom sur clips AI
         segments.append(seg)
 
     print(f"\n{'─'*55}")
