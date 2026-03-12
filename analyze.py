@@ -39,15 +39,35 @@ def call_claude(api_key, prompt):
 
 def main():
     # ── Lecture pa.json ──────────────────────────────────────────────
-    if not os.path.exists("pa.json"):
-        print("ERREUR : pa.json introuvable")
+    # Cherche pa.json (analyze-only) ou p.json (rendu complet) en fallback
+    if os.path.exists("pa.json"):
+        payload_file = "pa.json"
+    elif os.path.exists("p.json"):
+        payload_file = "p.json"
+        print("  (pa.json absent — fallback sur p.json)")
+    else:
+        print("ERREUR : ni pa.json ni p.json trouvés")
         sys.exit(1)
 
-    with open("pa.json") as f:
+    with open(payload_file) as f:
         data = json.load(f)
 
-    clips_meta   = data.get("clips_meta", [])
-    current_mode = data.get("current_mode", "auto")
+    # Supporte les deux formats : pa.json (clips_meta) et p.json (videos avec data base64)
+    if "clips_meta" in data:
+        clips_meta = data.get("clips_meta", [])
+    else:
+        # Extraire métadonnées depuis p.json (videos array)
+        clips_meta = []
+        for i, v in enumerate(data.get("videos", [])):
+            raw_bytes = len(v.get("data","")) * 3 // 4  # approx base64 decode size
+            clips_meta.append({
+                "index":   i + 1,
+                "role":    v.get("role", "auto"),
+                "size_mb": round(raw_bytes / 1_048_576, 2),
+                "name":    f"clip_{i+1}.mp4",
+            })
+
+    current_mode = data.get("current_mode", data.get("options", {}).get("mode", "auto"))
     opts         = data.get("options", {})
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "") or opts.get("anthropic_key", "")
