@@ -16,6 +16,28 @@ MARKER_START = "##VIRALITE_JSON_START##"
 MARKER_END   = "##VIRALITE_JSON_END##"
 
 
+def extract_json(text):
+    """Extrait le premier objet JSON valide depuis une réponse LLM."""
+    text = text.strip()
+    # Supprimer les blocs markdown ```json ... ```
+    import re
+    text = re.sub(r'^```(?:json)?\s*', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\s*```\s*$', '', text, flags=re.MULTILINE)
+    text = text.strip()
+    # Chercher le premier { ... } complet
+    start = text.find('{')
+    if start == -1:
+        raise ValueError("Aucun JSON trouvé dans la réponse")
+    depth = 0
+    for i, c in enumerate(text[start:], start):
+        if c == '{': depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0:
+                return json.loads(text[start:i+1])
+    raise ValueError("JSON incomplet dans la réponse")
+
+
 def call_llm(api_key, prompt):
     """
     GitHub Models — gratuit, zéro blocage (même réseau que Actions).
@@ -168,8 +190,7 @@ Réponds UNIQUEMENT en JSON valide, zéro texte avant ou après :
     print("\n  Appel Claude API…")
     try:
         raw = call_llm(api_key, prompt)
-        # Groq json_object mode retourne du JSON propre directement
-        result = json.loads(raw.strip())
+        result = extract_json(raw)
     except urllib.error.HTTPError as e:
         body = e.read().decode()
         print(f"ERREUR Gemini API HTTP {e.code} : {body[:500]}")
