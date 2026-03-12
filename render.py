@@ -444,9 +444,9 @@ def viralite_analysis(clips_raw, opts, raw_paths):
     Appelle Gemini 1.5 Flash via GEMINI_API_KEY (env var GitHub Actions).
     Écrit le résultat entre markers dans stdout pour parsing App.html.
     """
-    api_key = os.environ.get("GROQ_API_KEY", "") or opts.get("groq_key", "")
+    api_key = os.environ.get("OPENROUTER_API_KEY", "") or opts.get("openrouter_key", "")
     if not api_key:
-        print("  [Viralité] GROQ_API_KEY absent — analyse ignorée")
+        print("  [Viralité] OPENROUTER_API_KEY absent — analyse ignorée")
         return
 
     print("\n  [Viralité] Analyse en cours…")
@@ -508,16 +508,16 @@ Réponds UNIQUEMENT en JSON valide, aucun texte avant/après :
         "messages":   [{"role": "user", "content": prompt}]
     }).encode()
 
-    models = ["llama-3.3-70b-versatile","llama3-70b-8192","mixtral-8x7b-32768","gemma2-9b-it"]
-    payload_base = {"messages":[{"role":"user","content":prompt}],"temperature":0.3,"max_tokens":1200,"response_format":{"type":"json_object"}}
+    models = ["google/gemma-3-27b-it:free","meta-llama/llama-3.3-70b-instruct:free","mistralai/mistral-7b-instruct:free","qwen/qwen3-8b:free"]
+    payload_base = {"messages":[{"role":"user","content":prompt}],"temperature":0.3,"max_tokens":1200}
     raw_text = None
     last_err = None
     for model in models:
         payload_base["model"] = model
         req = urllib.request.Request(
-            "https://api.groq.com/openai/v1/chat/completions",
+            "https://openrouter.ai/api/v1/chat/completions",
             data=json.dumps(payload_base).encode(),
-            headers={"Content-Type":"application/json","Authorization":f"Bearer {api_key}"},
+            headers={"Content-Type":"application/json","Authorization":f"Bearer {api_key}","HTTP-Referer":"https://github.com/lescrados","X-Title":"ViraCut Studio"},
             method="POST"
         )
         try:

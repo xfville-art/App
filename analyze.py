@@ -16,33 +16,33 @@ MARKER_START = "##VIRALITE_JSON_START##"
 MARKER_END   = "##VIRALITE_JSON_END##"
 
 
-def call_groq(api_key, prompt):
+def call_llm(api_key, prompt):
     """
-    Groq API — 100% gratuit, sans carte bancaire.
-    Modèle : llama-3.3-70b-versatile (6000 req/jour free)
-    Clé sur : console.groq.com/keys
+    OpenRouter — agrégateur LLM gratuit, accepte GitHub Actions IPs.
+    Modèles gratuits : google/gemma-3-27b-it:free, meta-llama/llama-3.3-70b-instruct:free
+    Clé gratuite sur : openrouter.ai/keys (pas de CB requise)
     """
     models = [
-        "llama-3.3-70b-versatile",
-        "llama3-70b-8192",
-        "mixtral-8x7b-32768",
-        "gemma2-9b-it",
+        "google/gemma-3-27b-it:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "mistralai/mistral-7b-instruct:free",
+        "qwen/qwen3-8b:free",
     ]
-    payload_base = {
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.3,
-        "max_tokens": 1200,
-        "response_format": {"type": "json_object"},
-    }
     last_err = None
     for model in models:
-        payload_base["model"] = model
         req = urllib.request.Request(
-            "https://api.groq.com/openai/v1/chat/completions",
-            data    = json.dumps(payload_base).encode(),
+            "https://openrouter.ai/api/v1/chat/completions",
+            data = json.dumps({
+                "model":    model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3,
+                "max_tokens":  1200,
+            }).encode(),
             headers = {
                 "Content-Type":  "application/json",
                 "Authorization": f"Bearer {api_key}",
+                "HTTP-Referer":  "https://github.com/lescrados",
+                "X-Title":       "ViraCut Studio",
             },
             method = "POST"
         )
@@ -56,11 +56,9 @@ def call_groq(api_key, prompt):
             err_body = e.read().decode()
             print(f"  {model} → HTTP {e.code} — essai suivant")
             last_err = Exception(f"HTTP {e.code}: {err_body[:200]}")
-            continue
         except Exception as e:
             print(f"  {model} → {e} — essai suivant")
             last_err = e
-            continue
     raise last_err
 
 
@@ -97,9 +95,9 @@ def main():
     current_mode = data.get("current_mode", data.get("options", {}).get("mode", "auto"))
     opts         = data.get("options", {})
 
-    api_key = os.environ.get("GROQ_API_KEY", "") or opts.get("groq_key", "")
+    api_key = os.environ.get("OPENROUTER_API_KEY", "") or opts.get("openrouter_key", "")
     if not api_key:
-        print("ERREUR : GROQ_API_KEY absent — clé gratuite sur console.groq.com/keys")
+        print("ERREUR : OPENROUTER_API_KEY absent — clé gratuite sur openrouter.ai/keys")
         sys.exit(1)
 
     print("=" * 60)
@@ -170,7 +168,7 @@ Réponds UNIQUEMENT en JSON valide, zéro texte avant ou après :
     # ── Appel API ────────────────────────────────────────────────────
     print("\n  Appel Claude API…")
     try:
-        raw = call_groq(api_key, prompt)
+        raw = call_llm(api_key, prompt)
         # Groq json_object mode retourne du JSON propre directement
         result = json.loads(raw.strip())
     except urllib.error.HTTPError as e:
