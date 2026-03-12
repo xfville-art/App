@@ -508,25 +508,27 @@ Réponds UNIQUEMENT en JSON valide, aucun texte avant/après :
         "messages":   [{"role": "user", "content": prompt}]
     }).encode()
 
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.0-flash:generateContent?key={api_key}"
-    )
-    payload = json.dumps({
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1200}
-    }).encode()
-    req = urllib.request.Request(
-        url,
-        data    = payload,
-        headers = {"Content-Type": "application/json"},
-        method  = "POST"
-    )
+    models = ["gemini-2.0-flash-lite","gemini-1.5-flash-latest","gemini-1.5-flash-8b","gemini-2.0-flash"]
+    payload_obj = {"contents":[{"parts":[{"text":prompt}]}],"generationConfig":{"temperature":0.3,"maxOutputTokens":1200}}
+    raw_text = None
+    last_err = None
+    for model in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        req = urllib.request.Request(url, data=json.dumps(payload_obj).encode(), headers={"Content-Type":"application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                body = json.loads(resp.read().decode())
+            raw_text = body["candidates"][0]["content"]["parts"][0]["text"]
+            print(f"      Modèle : {model}")
+            break
+        except Exception as e:
+            print(f"      {model} → {e}")
+            last_err = e
+    if raw_text is None:
+        raise last_err
 
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            body = json.loads(resp.read().decode())
-        raw_text = body["candidates"][0]["content"]["parts"][0]["text"]
+        _ = raw_text  # already set above
         clean    = raw_text.strip().lstrip("```json").rstrip("```").strip()
         result   = json.loads(clean)
         result["clips"] = len(clips_meta)

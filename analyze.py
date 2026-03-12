@@ -17,28 +17,45 @@ MARKER_END   = "##VIRALITE_JSON_END##"
 
 
 def call_gemini(api_key, prompt):
-    """Gemini 1.5 Flash — gratuit, 15 req/min, 1M tokens/jour."""
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.0-flash:generateContent?key={api_key}"
-    )
-    payload = json.dumps({
+    """Gemini — essaie plusieurs modèles free tier dans l'ordre."""
+    models = [
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-flash-8b",
+        "gemini-2.0-flash",
+    ]
+    payload_obj = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature":     0.3,
-            "maxOutputTokens": 1200,
-        }
-    }).encode()
-
-    req = urllib.request.Request(
-        url,
-        data    = payload,
-        headers = {"Content-Type": "application/json"},
-        method  = "POST"
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        body = json.loads(resp.read().decode())
-    return body["candidates"][0]["content"]["parts"][0]["text"]
+        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1200}
+    }
+    last_err = None
+    for model in models:
+        url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{model}:generateContent?key={api_key}"
+        )
+        req = urllib.request.Request(
+            url,
+            data    = json.dumps(payload_obj).encode(),
+            headers = {"Content-Type": "application/json"},
+            method  = "POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                body = json.loads(resp.read().decode())
+            text = body["candidates"][0]["content"]["parts"][0]["text"]
+            print(f"  Modèle utilisé : {model}")
+            return text
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode()
+            print(f"  {model} → HTTP {e.code} — essai suivant")
+            last_err = urllib.error.HTTPError(e.url, e.code, err_body, e.headers, None)
+            continue
+        except Exception as e:
+            print(f"  {model} → erreur : {e} — essai suivant")
+            last_err = e
+            continue
+    raise last_err
 
 
 def main():
