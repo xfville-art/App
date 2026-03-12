@@ -307,12 +307,11 @@ def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts):
     actual = max(actual, 1.0)  # garde-fou absolu
 
     # ── Filtres video ────────────────────────────────────────────────
-    # Crop intelligent : remplit le 9:16 sans barres noires
-    # 1) scale pour que la plus petite dimension remplisse le cadre
-    # 2) crop centré pour couper les bords excédentaires
+    # Scale exact : si déjà 720x1280 → resize direct sans sur-zoom
+    # Si ratio différent (ex: 16:9) → crop centré pour remplir 9:16
     scale_crop = (
-        f"scale={W}:{H}:force_original_aspect_ratio=increase,"
-        f"crop={W}:{H},fps={fps}"
+        f"scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,"
+        f"crop={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}"
     )
     grade = "eq=saturation=0.95:brightness=-0.01:contrast=1.05"
     # Ken Burns désactivé — clips AI déjà animés, le zoom supplémentaire
@@ -560,12 +559,25 @@ def start():
     print(f"  Snap IN            : {cfg(opts,'dialogue_in_snap')}")
     print(f"  xfade dialogue  : {cfg(opts,'dialogue_xfade_min')}-{cfg(opts,'dialogue_xfade_max')}s")
 
-    # Decodage des clips
+    # Decodage + sanitisation des clips sources
+    # Force un re-encode propre pour éliminer les artefacts GOP des clips AI
     raw_paths = []
+    W, H = cfg(opts, "resolution").split("x")
+    fps  = cfg(opts, "fps")
+    crf  = cfg(opts, "crf")
     for i, v in enumerate(clips_raw):
-        p = f"_raw_{i}.mp4"
-        with open(p, "wb") as f:
+        raw = f"_raw_{i}_orig.mp4"
+        p   = f"_raw_{i}.mp4"
+        with open(raw, "wb") as f:
             f.write(base64.b64decode(v["data"]))
+        # Re-encode immédiat : GOP fixe, pas de B-frames, yuv420p propre
+        # PAS de scale ici — build_cinema_segment s'en charge
+        run(
+            f'ffmpeg -y -i "{raw}" '
+            f'-c:v libx264 -crf {crf} -preset fast -pix_fmt yuv420p '
+            f'-x264opts "keyint=24:no-scenecut" '
+            f'-bf 0 -c:a aac -ar 44100 -ac 2 "{p}"'
+        )
         d = duration(p)
         print(f"  Clip {i} : {d:.2f}s  audio={has_audio(p)}")
         raw_paths.append(p)
