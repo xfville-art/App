@@ -1,5 +1,6 @@
 """
 analyze.py — ViraCut Studio v10  ★ LesCrados.Ai Edition ★
+  Gemini 1.5 Flash (gratuit) — aistudio.google.com
 ══════════════════════════════════════════════════════════
 Analyse de viralité PRÉ-RENDU via Claude API.
 Lit pa.json (métadonnées clips, config actuelle).
@@ -15,26 +16,29 @@ MARKER_START = "##VIRALITE_JSON_START##"
 MARKER_END   = "##VIRALITE_JSON_END##"
 
 
-def call_claude(api_key, prompt):
+def call_gemini(api_key, prompt):
+    """Gemini 1.5 Flash — gratuit, 15 req/min, 1M tokens/jour."""
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"gemini-1.5-flash:generateContent?key={api_key}"
+    )
     payload = json.dumps({
-        "model":      "claude-sonnet-4-20250514",
-        "max_tokens": 1200,
-        "messages":   [{"role": "user", "content": prompt}]
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature":     0.3,
+            "maxOutputTokens": 1200,
+        }
     }).encode()
 
     req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
+        url,
         data    = payload,
-        headers = {
-            "Content-Type":      "application/json",
-            "x-api-key":         api_key,
-            "anthropic-version": "2023-06-01",
-        },
-        method = "POST"
+        headers = {"Content-Type": "application/json"},
+        method  = "POST"
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         body = json.loads(resp.read().decode())
-    return "".join(b.get("text","") for b in body.get("content",[]))
+    return body["candidates"][0]["content"]["parts"][0]["text"]
 
 
 def main():
@@ -70,9 +74,9 @@ def main():
     current_mode = data.get("current_mode", data.get("options", {}).get("mode", "auto"))
     opts         = data.get("options", {})
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "") or opts.get("anthropic_key", "")
+    api_key = os.environ.get("GEMINI_API_KEY", "") or opts.get("gemini_key", "")
     if not api_key:
-        print("ERREUR : ANTHROPIC_API_KEY absent — analyse impossible")
+        print("ERREUR : GEMINI_API_KEY absent — ajouter dans Settings > Secrets > Actions")
         sys.exit(1)
 
     print("=" * 60)
@@ -143,12 +147,12 @@ Réponds UNIQUEMENT en JSON valide, zéro texte avant ou après :
     # ── Appel API ────────────────────────────────────────────────────
     print("\n  Appel Claude API…")
     try:
-        raw = call_claude(api_key, prompt)
+        raw = call_gemini(api_key, prompt)
         clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         result = json.loads(clean)
     except urllib.error.HTTPError as e:
         body = e.read().decode()
-        print(f"ERREUR API HTTP {e.code} : {body}")
+        print(f"ERREUR Gemini API HTTP {e.code} : {body[:500]}")
         sys.exit(1)
     except Exception as e:
         print(f"ERREUR : {e}")
