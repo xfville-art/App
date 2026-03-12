@@ -35,12 +35,12 @@ DEFAULTS = {
 
     # ── Dialogue Cut Engine ─────────────────────────────────────────
     "dialogue_cut":       True,   # activer le snap sur les pauses
-    "dialogue_noise_db":  -30,    # seuil de silence (dBFS)
+    "dialogue_noise_db":  -28,    # seuil de silence (dBFS)
     "dialogue_min_pause": 0.08,   # duree min d une pause (s)
-    "dialogue_tolerance": 1.0,    # fenetre +/-s autour de la cible
+    "dialogue_tolerance": 1.5,    # fenetre +/-s autour de la cible
     "dialogue_in_snap":   True,   # snap aussi le point d entree
-    "dialogue_xfade_min": 0.25,   # xfade court si coupure en plein dialogue
-    "dialogue_xfade_max": 0.6,    # xfade long si coupure en silence
+    "dialogue_xfade_min": 0.15,   # xfade court si coupure en plein dialogue
+    "dialogue_xfade_max": 0.35,   # xfade long si coupure en silence
 }
 
 MIN_CLIP_DUR = 1.5
@@ -315,12 +315,18 @@ def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts):
         f"crop={W}:{H},fps={fps}"
     )
     grade = "eq=saturation=0.95:brightness=-0.01:contrast=1.05"
-    inc   = (kb_zoom - 1.0) / max(actual * fps, 1)
-    kb    = (
-        f"zoompan=z='min(zoom+{inc:.6f},{kb_zoom})':"
-        f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={fps}"
-    )
-    vf = f"{scale_crop},{grade},{kb}"
+    # Ken Burns désactivé — clips AI déjà animés, le zoom supplémentaire
+    # déforme le cadre et écrase les visages
+    # kb_zoom gardé en config pour réactiver si besoin (>1.0)
+    if kb_zoom > 1.001:
+        inc = (kb_zoom - 1.0) / max(actual * fps, 1)
+        kb  = (
+            f"zoompan=z='min(zoom+{inc:.6f},{kb_zoom})':"
+            f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={fps}"
+        )
+        vf = f"{scale_crop},{grade},{kb}"
+    else:
+        vf = f"{scale_crop},{grade}"
 
     # ── Extraction (avec seek en entree = ultra rapide) ───────────────
     ss_flag = f"-ss {in_pt:.3f}" if in_pt > 0.001 else ""
