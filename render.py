@@ -224,11 +224,11 @@ def build_logo_splash(out, opts):
     dur  = 2.5
 
     # Tailles basees sur Hi — CRADOS dominant
-    margin    = int(Wi * 0.04)
+    margin    = int(Wi * 0.06)          # 6% marge chaque cote
     max_w     = Wi - margin * 2
-    crados_sz = int(Hi * 0.14)
-    max_by_w  = int(max_w / (len("CRADOS") * 0.62))
-    crados_sz = min(crados_sz, max_by_w)
+    # Impact ~ 0.76 par caractere — coefficient calibre empiriquement
+    crados_sz = int(max_w / (len("CRADOS") * 0.76))
+    # (pas de min supplementaire — max_w/0.76 garantit deja le fit)
     les_sz    = int(crados_sz * 0.44)
     ai_sz     = int(crados_sz * 0.48)
     gap1      = int(crados_sz * 0.06)
