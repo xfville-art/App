@@ -1,5 +1,5 @@
 """
-render.py — ViraCut Studio v10  ★ LesCrados.Ai Edition ★
+render.py — ViraCut Studio v10  ★ LesCrados.Ai Edition ★  [Logo Pixar-style v2]
 ═════════════════════════════════════════════════════════
 v10 : VIRALITÉ ANALYSIS ENGINE
      — analyse Claude API avant rendu FFmpeg
@@ -214,26 +214,146 @@ def adaptive_xfade(out_silences, in_silences, cut_out_t, xf_base, xf_min, xf_max
 # LOGO SPLASH ANIME
 # ═══════════════════════════════════════════════════════════════════════
 def build_logo_splash(out, opts):
+    """
+    Outro Pixar-style — 2.5s cinématique :
+      - Fond noir avec halo rouge animé (radial gradient pulsant via geq)
+      - Particules lumineuses (points scintillants via geq)
+      - LES  : slide depuis le haut + bounce
+      - CRADOS : scale-up depuis 0 avec overshoot élastique
+      - .Ai  : fade-in + shimmer rouge
+      - Fade-out final propre
+    """
     W, H = cfg(opts, "resolution").split("x")
     fps  = cfg(opts, "fps"); crf = cfg(opts, "crf")
     Wi, Hi = int(W), int(H)
-    # Outro réduite à 1s — rapide, percutante, ne casse pas le rythme
-    dur = 1.0
-    les_sz, crados_sz, ai_sz = 60, 110, 64
-    total_h   = les_sz + 14 + crados_sz + 10 + ai_sz
+    dur = 2.5          # durée totale — assez long pour la magie, assez court pour le rythme
+    cx  = Wi // 2      # centre X
+    cy  = Hi // 2      # centre Y
+
+    # ── Tailles basées sur Hi (hauteur) — même logique que le preview HTML ──
+    # CRADOS_SZ = 14% de Hi → gros et dominant quelle que soit la résolution
+    margin    = int(Wi * 0.04)
+    max_w     = Wi - margin * 2
+    crados_sz = int(Hi * 0.14)
+    # Sécurité : ne dépasse pas la largeur (Impact ~0.62 * sz par char)
+    max_by_w  = int(max_w / (len('CRADOS') * 0.62))
+    crados_sz = min(crados_sz, max_by_w)
+    les_sz    = int(crados_sz * 0.44)
+    ai_sz     = int(crados_sz * 0.48)
+    gap1      = int(crados_sz * 0.06)
+    gap2      = int(crados_sz * 0.05)
+    total_h   = les_sz + gap1 + crados_sz + gap2 + ai_sz
     block_top = (Hi - total_h) // 2
+
     les_y    = block_top
-    crados_y = block_top + les_sz + 14
-    ai_y     = block_top + les_sz + 14 + crados_sz + 16
+    crados_y = block_top + les_sz + gap1
+    ai_y     = block_top + les_sz + gap1 + crados_sz + gap2
 
-    dt_les  = (f"drawtext=fontfile={FONT}:text='LES':fontsize={les_sz}:"
-               f"fontcolor=white:x=(w-text_w)/2:y={les_y}:enable='gte(t,0)'")
-    dt_crad = (f"drawtext=fontfile={FONT}:text='CRADOS':fontsize={crados_sz}:"
-               f"fontcolor=white:x=(w-text_w)/2:y={crados_y}:enable='gte(t,0)'")
-    dt_ai   = (f"drawtext=fontfile={FONT}:text='.Ai':fontsize={ai_sz}:"
-               f"fontcolor=#FF2442:x=(w-text_w)/2:y={ai_y}:enable='gte(t,0)'")
+    # ── Fond dynamique : halo rouge pulsant (geq) ────────────────────
+    # Radial gradient rouge sombre qui pulse en luminosité selon sin(t)
+    glow_expr = (
+        "r='clip(120*(1+0.35*sin(2*PI*t*0.8))*exp(-hypot(X-{cx},Y-{cy})^2/(2*({r}*{r}+(50*sin(PI*t*0.6))^2))),0,255)'"
+        ":g='clip(8*(1+0.2*sin(2*PI*t*0.9))*exp(-hypot(X-{cx},Y-{cy})^2/(2*({r}*{r}))),0,255)'"
+        ":b='clip(12*(1+0.15*sin(2*PI*t))*exp(-hypot(X-{cx},Y-{cy})^2/(2*({r}*{r}))),0,255)'"
+    ).format(cx=cx, cy=cy, r=min(Wi, Hi) * 0.38)
+    bg_filter = f"geq={glow_expr}"
 
-    vf = f"{dt_les},{dt_crad},{dt_ai},fade=t=in:st=0:d=0.1,fade=t=out:st=0.8:d=0.2"
+    # ── Particules : points blancs scintillants (geq surcharge) ──────
+    # On génère 8 particules fixes avec scintillement individuel
+    particles = []
+    import math
+    seeds = [(0.18, 0.22, 1.1), (0.82, 0.18, 0.7), (0.12, 0.75, 0.9),
+             (0.88, 0.72, 1.3), (0.35, 0.12, 0.8), (0.65, 0.88, 1.0),
+             (0.22, 0.55, 1.4), (0.78, 0.42, 0.6)]
+    for px_frac, py_frac, phase in seeds:
+        px = int(px_frac * Wi)
+        py = int(py_frac * Hi)
+        r  = 3   # rayon particule
+        # drawtext "•" serait trop imprécis — on utilise des drawbox minuscules
+        particles.append(
+            f"drawbox=x={px-r}:y={py-r}:w={r*2}:h={r*2}:"
+            f"color=white@'(0.6+0.4*sin(2*PI*t*{phase:.1f}+{phase:.2f}))':t=fill"
+        )
+
+    # ── Bounce physics helper ─────────────────────────────────────────
+    # y_bounce(t, t0, from_y, to_y, dur) — ressort amorti simplifié
+    # Exprimé en expression ffmpeg : pas de fonctions custom, on linéarise
+    # On utilise des keyframes via "if(between(t,...))" chain
+
+    # LES — tombe depuis le haut (off-screen) avec bounce
+    # Arrive à les_y en ~0.25s, rebond rapide
+    les_anim = (
+        f"y=if(lt(t,0.0),{les_y-Hi},"
+        f"if(lt(t,0.25),{les_y-Hi}+({les_y}-({les_y-Hi}))*(t/0.25),"
+        f"if(lt(t,0.35),{les_y}+(-18)*sin(PI*(t-0.25)/0.1),"
+        f"if(lt(t,0.42),{les_y}+(6)*sin(PI*(t-0.35)/0.07),"
+        f"{les_y}))))"
+    )
+
+    # CRADOS — scale depuis 0 avec overshoot (simulé par fontsize dynamique)
+    # ffmpeg drawtext supporte fontsize expression depuis 5.x — on l'exploite
+    crados_scale_start = 0.3   # démarre à t=0.15s
+    # fontsize = crados_sz * scale_factor(t)
+    # scale : 0→1.15 (overshoot) → 1.0
+    crados_fs_expr = (
+        f"fontsize=if(lt(t,{crados_scale_start}),1,"
+        f"if(lt(t,{crados_scale_start+0.28:.2f}),"
+        f"  {crados_sz}*1.15*(t-{crados_scale_start:.2f})/{0.28:.2f},"
+        f"if(lt(t,{crados_scale_start+0.42:.2f}),"
+        f"  {crados_sz}*(1.15-0.15*((t-{crados_scale_start+0.28:.2f})/{0.14:.2f})),"
+        f"  {crados_sz})))"
+    )
+
+    # ── drawtext filters ─────────────────────────────────────────────
+    dt_les = (
+        f"drawtext=fontfile={FONT}:text='LES':fontsize={les_sz}:"
+        f"fontcolor=white:x=(w-text_w)/2:{les_anim}:"
+        f"enable='gte(t,0)'"
+    )
+
+    # CRADOS avec scale — on fixe y et on laisse fontsize varier
+    # alpha fade-in rapide dès t=0.15
+    dt_crad = (
+        f"drawtext=fontfile={FONT}:text='CRADOS':{crados_fs_expr}:"
+        f"fontcolor=white:x=(w-text_w)/2:y={crados_y}:"
+        f"alpha='if(lt(t,0.15),0,min(1,(t-0.15)/0.15))':"
+        f"enable='gte(t,0.15)'"
+    )
+
+    # .Ai — shimmer rouge, apparaît à t=0.55
+    ai_start = 0.55
+    dt_ai = (
+        f"drawtext=fontfile={FONT}:text='.Ai':fontsize={ai_sz}:"
+        f"fontcolor=#FF2442:x=(w-text_w)/2:y={ai_y}:"
+        f"alpha='if(lt(t,{ai_start}),0,min(1,(t-{ai_start})/0.18))':"
+        f"enable='gte(t,{ai_start})'"
+    )
+
+    # ── Ligne décorative sous CRADOS (drawbox animé, s'élargit) ──────
+    line_y = crados_y + crados_sz + 4
+    line_h = 3
+    line_max_w = int(Wi * 0.55)
+    line_x_center = (Wi - line_max_w) // 2
+    dt_line = (
+        f"drawbox=x={line_x_center}:y={line_y}:"
+        f"w='if(lt(t,0.4),0,min({line_max_w},{line_max_w}*(t-0.4)/0.3))':"
+        f"h={line_h}:color=#FF2442@0.85:t=fill"
+    )
+
+    # ── Assemblage filter_complex ────────────────────────────────────
+    particle_chain = ",".join(particles)
+    vf_parts = [
+        bg_filter,
+        particle_chain,
+        dt_les,
+        dt_crad,
+        dt_ai,
+        dt_line,
+        f"fade=t=in:st=0:d=0.18",
+        f"fade=t=out:st={dur-0.35:.2f}:d=0.35",
+    ]
+    vf = ",".join(vf_parts)
+
     run(
         f'ffmpeg -y -f lavfi -i "color=c=black:size={W}x{H}:rate={fps}" '
         f'-f lavfi -i "anullsrc=r=44100:cl=stereo" -t {dur} '
