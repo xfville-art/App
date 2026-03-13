@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  models: read
+  contents: write   # checkout + lecture pa.json commité
+  actions: read     # lecture des logs du job
+  models: read      # GitHub Models API
 
 jobs:
   analyze:
