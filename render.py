@@ -594,11 +594,12 @@ def start():
         p   = f"_raw_{i}.mp4"
         with open(raw, "wb") as f:
             f.write(base64.b64decode(v["data"]))
-        # Re-encode : scale 9:16 + GOP fixe + pas de B-frames
+        # Re-encode : conserve le format original (pas de zoom/crop)
+        # scale dans le cadre 9:16, pad avec barres noires si ratio different
         run(
             f'ffmpeg -y -i "{raw}" '
-            f'-vf "scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,'
-            f'crop={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}" '
+            f'-vf "scale={W}:{H}:force_original_aspect_ratio=decrease:flags=lanczos,'
+            f'pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps={fps}" '
             f'-c:v libx264 -crf {crf} -preset fast -pix_fmt yuv420p '
             f'-x264opts "keyint={fps}:no-scenecut" '
             f'-bf 0 -c:a aac -ar 44100 -ac 2 "{p}"'
