@@ -281,11 +281,23 @@ def build_logo_splash(out, opts):
         f"color=#FF2442@0.9:t=fill:enable='gte(t,0.6)'"
     )
 
-    vf = ",".join([
-        bg_filter, dt_les, dt_crad, dt_ai, dt_line,
+    # Scanlines : 1 ligne noire tous les 4px — look CRT/carte collector
+    # step=4 pour limiter la longueur de la chaine de filtres (~16k chars)
+    scanlines = []
+    for _sy in range(0, Hi, 4):
+        scanlines.append(
+            "drawbox=x=0:y=" + str(_sy) + ":w=" + str(Wi) + ":h=1:color=black@0.22:t=fill"
+        )
+
+    # Vignette native FFmpeg
+    vignette_f = "vignette=PI/3.5:eval=frame"
+
+    vf_parts = [bg_filter, dt_les, dt_crad, dt_ai, dt_line] + scanlines + [
+        vignette_f,
         "fade=t=in:st=0:d=0.2",
         f"fade=t=out:st={dur-0.4:.2f}:d=0.4",
-    ])
+    ]
+    vf = ",".join(vf_parts)
 
     run(
         f'ffmpeg -y -f lavfi -i "color=c=black:size={W}x{H}:rate={fps}" '
