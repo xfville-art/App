@@ -75,7 +75,8 @@ def call_llm(api_key, prompt):
         except urllib.error.HTTPError as e:
             err_body = e.read().decode()[:200]
             print(f"  {model} → HTTP {e.code} — essai suivant")
-            last_err = Exception(f"HTTP {e.code}: {err_body}")        except Exception as e:
+            last_err = Exception(f"HTTP {e.code}: {err_body}")
+        except Exception as e:
             print(f"  {model} → {e} — essai suivant")
             last_err = e
 
