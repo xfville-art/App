@@ -748,6 +748,10 @@ def start():
                          rc.get("punch_dur", opts.get("punch_dur", 3.0)))
             opts["cinema_dur"] = round(min(rec_total, 13), 2)
             print(f"  Durée cible viralité (punch) : {opts['cinema_dur']}s")
+            # Recalculer clip_dur avec la nouvelle durée cible
+            target   = min(opts["cinema_dur"], 13)
+            clip_dur = max((target - xf_b * (n - 1)) / n, MIN_CLIP_DUR)
+            print(f"  Durée segment recalculée      : {clip_dur:.2f}s")
 
     # Rendu des segments
     segments = []
