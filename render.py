@@ -456,10 +456,73 @@ def build_cinema_overlay_no_text(opts):
 VIRALITE_MARKER_START = "##VIRALITE_JSON_START##"
 VIRALITE_MARKER_END   = "##VIRALITE_JSON_END##"
 
+def _call_github_models(api_key, prompt):
+    """
+    Appel GitHub Models (gratuit, toujours disponible dans GitHub Actions).
+    Fallback séquentiel sur 4 modèles.
+    """
+    import re as _re
+    models = [
+        "meta-llama-3.3-70b-instruct",
+        "gpt-4o-mini",
+        "mistral-nemo",
+        "meta-llama-3.1-8b-instruct",
+    ]
+    last_err = None
+    for model in models:
+        req = urllib.request.Request(
+            "https://models.inference.ai.azure.com/chat/completions",
+            data=json.dumps({
+                "model":       model,
+                "messages":    [{"role": "user", "content": prompt}],
+                "temperature": 0.3,
+                "max_tokens":  1200,
+            }).encode(),
+            headers={
+                "Content-Type":  "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                body = json.loads(resp.read().decode())
+            raw = body["choices"][0]["message"]["content"]
+            print(f"      Modèle utilisé : {model}")
+            return raw
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode()[:200]
+            print(f"      {model} → HTTP {e.code} — essai suivant")
+            last_err = Exception(f"HTTP {e.code}: {err_body}")
+        except Exception as e:
+            print(f"      {model} → {e} — essai suivant")
+            last_err = e
+    raise last_err or Exception("Tous les modèles GitHub ont échoué")
+
+
+def _extract_json(text):
+    """Extrait le premier objet JSON valide depuis une réponse LLM."""
+    import re as _re
+    text = _re.sub(r'^```(?:json)?\s*', '', text.strip(), flags=_re.MULTILINE)
+    text = _re.sub(r'\s*```\s*$', '', text, flags=_re.MULTILINE).strip()
+    start = text.find('{')
+    if start == -1:
+        raise ValueError("Aucun JSON trouvé dans la réponse")
+    depth = 0
+    for i, c in enumerate(text[start:], start):
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0:
+                return json.loads(text[start:i + 1])
+    raise ValueError("JSON incomplet dans la réponse")
+
+
 def viralite_analysis(clips_raw, opts, raw_paths):
     """
-    Analyse le potentiel viral TikTok des clips AVANT rendu.
-    Appelle Gemini 1.5 Flash via GEMINI_API_KEY (env var GitHub Actions).
+    Analyse le potentiel viral TikTok des clips via GitHub Models.
+    Aligne le prompt sur analyze.py (règles Les Crados, recommended_config).
     Écrit le résultat entre markers dans stdout pour parsing App.html.
     """
     api_key = os.environ.get("GITHUB_TOKEN", "")
@@ -469,41 +532,59 @@ def viralite_analysis(clips_raw, opts, raw_paths):
 
     print("\n  [Viralité] Analyse en cours…")
 
-    # Métadonnées clips (sans bytes vidéo)
+    # Métadonnées clips (sans bytes vidéo — mesure durée réelle post-sanitisation)
     clips_meta = []
     for i, (v, path) in enumerate(zip(clips_raw, raw_paths)):
         try:
-            dur = duration(path)
+            dur   = duration(path)
             audio = has_audio(path)
         except Exception:
             dur, audio = 0, False
         clips_meta.append({
-            "index":    i + 1,
-            "role":     v.get("role", "auto"),
-            "dur_s":    round(dur, 2),
+            "index":     i + 1,
+            "role":      v.get("role", "auto"),
+            "dur_s":     round(dur, 2),
             "has_audio": audio,
-            "size_mb":  round(len(base64.b64decode(v["data"])) / 1_048_576, 2)
+            "size_mb":   round(len(base64.b64decode(v["data"])) / 1_048_576, 2),
+            "name":      v.get("name", f"clip_{i+1}.mp4"),
         })
 
-    mode = opts.get("mode", "auto")
-    prompt = f"""Tu es un expert TikTok spécialisé dans le contenu Les Crados (cartes satiriques style Garbage Pail Kids, humour absurde, personnages français).
+    mode      = opts.get("mode", "auto")
+    n_clips   = len(clips_meta)
+    clips_desc = "\n".join(
+        f"  Clip {c['index']} — rôle={c['role']} dur={c['dur_s']}s "
+        f"audio={'oui' if c['has_audio'] else 'non'} "
+        f"taille={c['size_mb']}MB nom={c['name']}"
+        for c in clips_meta
+    )
 
-Analyse ce montage et donne un score de potentiel viral TikTok.
+    prompt = f"""Tu es un expert TikTok spécialisé dans Les Crados (cartes satiriques absurdes style Garbage Pail Kids, public français, format 9:16).
 
-CLIPS ({len(clips_meta)}) :
-{json.dumps(clips_meta, ensure_ascii=False)}
+Analyse ces clips et optimise la config pour maximiser la rétention TikTok.
 
-MODE : {mode.upper()}
-CONFIG : hook={opts.get("hook_dur",2)}s | core={opts.get("core_dur",2.5)}s | punch={opts.get("punch_dur",3)}s | résolution={opts.get("resolution","720x1280")} | textes_IA={opts.get("ai_text",True)} | dialogue_cut={opts.get("dialogue_cut",True)}
+CLIPS ({n_clips}) :
+{clips_desc}
 
-Évalue selon 5 axes pour Les Crados TikTok :
-1. Structure narrative (hook/core/punchline)
-2. Rythme & durée totale
-3. Potentiel de loop (fin → début)
-4. Diversité visuelle (clips variés)
-5. Compatibilité format 9:16 TikTok
+CONFIG ACTUELLE :
+- Mode : {mode.upper()}
+- Hook dur : {opts.get('hook_dur', 2)}s
+- Core dur : {opts.get('core_dur', 2.5)}s
+- Punch dur : {opts.get('punch_dur', 3)}s
+- Flash cut : {opts.get('flash_cut', True)}
+- Zoom punch : {opts.get('zoom_punch', True)}
+- Textes IA : {opts.get('ai_text', True)}
+- Résolution : {opts.get('resolution', '720x1280')}
 
-Réponds UNIQUEMENT en JSON valide, aucun texte avant/après :
+RÈGLES Les Crados TikTok :
+- Durée idéale : 7-9s pour PUNCH, 20-26s pour CINÉMA
+- Hook doit accrocher en 1.5-2s max (image choc, texte percutant)
+- Le clip le plus visuellement fort = hook
+- Punchline = dernier clip, doit être absurde/choquant
+- Loop parfait = fin qui rappelle le début
+- Flash cut + zoom punch = essentiels pour le PUNCH
+- Si 1 seul clip : mode CINÉMA obligatoire
+
+Réponds UNIQUEMENT en JSON valide, zéro texte avant ou après :
 {{
   "score": <entier 0-100>,
   "axes": [
@@ -514,56 +595,44 @@ Réponds UNIQUEMENT en JSON valide, aucun texte avant/après :
     {{"name": "Format",    "score": <0-100>}}
   ],
   "recs": [
-    {{"type": "pos", "text": "<point fort, max 60 chars>"}},
-    {{"type": "neg", "text": "<point faible, max 60 chars>"}},
-    {{"type": "tip", "text": "<conseil actionnable, max 60 chars>"}}
-  ]
+    {{"type": "pos", "text": "<point fort concis max 60 chars>"}},
+    {{"type": "neg", "text": "<point faible concis max 60 chars>"}},
+    {{"type": "tip", "text": "<conseil actionnable max 60 chars>"}}
+  ],
+  "recommended_config": {{
+    "mode": "<auto|punch|cinema>",
+    "hook_dur": <float>,
+    "core_dur": <float>,
+    "punch_dur": <float>,
+    "flash_cut": <bool>,
+    "zoom_punch": <bool>,
+    "ai_text": <bool>,
+    "clip_order": [<indices 0-based dans le meilleur ordre hook→core→punch>]
+  }}
 }}"""
 
-    payload = json.dumps({
-        "model":      "claude-sonnet-4-20250514",
-        "max_tokens": 800,
-        "messages":   [{"role": "user", "content": prompt}]
-    }).encode()
-
-    models = ["meta-llama-3.3-70b-instruct","gpt-4o-mini","mistral-nemo","meta-llama-3.1-8b-instruct"]
-    raw_text = None
-    last_err = None
-    for model in models:
-        payload_base = {"model":model,"messages":[{"role":"user","content":prompt[:3000]}],"temperature":0.3,"max_tokens":1200}
-        req = urllib.request.Request(
-            "https://models.inference.ai.azure.com/chat/completions",
-            data=json.dumps(payload_base).encode(),
-            headers={"Content-Type":"application/json","Authorization":f"Bearer {api_key}"},
-            method="POST"
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                body = json.loads(resp.read().decode())
-            raw_text = body["choices"][0]["message"]["content"]
-            print(f"      Modèle : {model}")
-            break
-        except Exception as e:
-            print(f"      {model} → {e}")
-            last_err = e
-    if raw_text is None:
-        raise last_err
-
     try:
-        _ = raw_text  # already set above
-        clean    = raw_text.strip().lstrip("```json").rstrip("```").strip()
-        result   = json.loads(clean)
-        result["clips"] = len(clips_meta)
-        result["mode"]  = mode
-        # Affichage parseable par App.html
-        print(f"  [Viralité] Score : {result['score']}/100")
-        for ax in result.get("axes", []):
-            print(f"    {ax['name']:12s}: {ax['score']}")
-        print(f"  {VIRALITE_MARKER_START}")
-        print(json.dumps(result, ensure_ascii=False))
-        print(f"  {VIRALITE_MARKER_END}")
+        raw_text = _call_github_models(api_key, prompt)
+        result   = _extract_json(raw_text)
     except Exception as e:
         print(f"  [Viralité] Erreur API : {e}")
+        return
+
+    result["clips"] = n_clips
+    result["mode"]  = mode
+
+    # Affichage parseable par App.html
+    print(f"  [Viralité] Score : {result['score']}/100")
+    for ax in result.get("axes", []):
+        print(f"    {ax['name']:12s}: {ax['score']}")
+    rc = result.get("recommended_config", {})
+    if rc:
+        print(f"  [Viralité] Config recommandée → mode={rc.get('mode','?').upper()} "
+              f"ordre={rc.get('clip_order','?')}")
+    print(f"  {VIRALITE_MARKER_START}")
+    print(json.dumps(result, ensure_ascii=False))
+    print(f"  {VIRALITE_MARKER_END}")
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -650,7 +719,18 @@ def start():
     print(f"\n  Duree cible/segment : {clip_dur:.2f}s  |  xfade base : {xf_b}s\n")
 
     # ── Analyse viralité avant rendu ───────────────────────────────
-    viralite_analysis(clips_raw, opts, raw_paths)
+    vira_result = viralite_analysis(clips_raw, opts, raw_paths)
+
+    # Appliquer clip_order depuis l'analyse inline si pas déjà appliqué depuis pa.json
+    if vira_result and not opts.get("clip_order"):
+        rc = vira_result.get("recommended_config", {})
+        inline_order = rc.get("clip_order")
+        if (inline_order and isinstance(inline_order, list)
+                and len(inline_order) == len(raw_paths)
+                and sorted(inline_order) == list(range(len(raw_paths)))):
+            raw_paths = [raw_paths[i] for i in inline_order]
+            clips_raw = [clips_raw[i] for i in inline_order]
+            print(f"  Ordre viralité inline appliqué : {inline_order}")
 
     # Rendu des segments
     segments = []
