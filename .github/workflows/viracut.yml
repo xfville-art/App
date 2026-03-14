@@ -3,6 +3,10 @@ name: VIRACUT
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  models: read      # GitHub Models API — requis pour l'analyse viralité
+
 jobs:
   render:
     runs-on: ubuntu-latest
