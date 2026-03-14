@@ -721,16 +721,33 @@ def start():
     # ── Analyse viralité avant rendu ───────────────────────────────
     vira_result = viralite_analysis(clips_raw, opts, raw_paths)
 
-    # Appliquer clip_order depuis l'analyse inline si pas déjà appliqué depuis pa.json
-    if vira_result and not opts.get("clip_order"):
+    # ── Appliquer les recommandations de l'analyse inline ──────────
+    if vira_result:
         rc = vira_result.get("recommended_config", {})
-        inline_order = rc.get("clip_order")
-        if (inline_order and isinstance(inline_order, list)
-                and len(inline_order) == len(raw_paths)
-                and sorted(inline_order) == list(range(len(raw_paths)))):
-            raw_paths = [raw_paths[i] for i in inline_order]
-            clips_raw = [clips_raw[i] for i in inline_order]
-            print(f"  Ordre viralité inline appliqué : {inline_order}")
+
+        # 1. Ordre des clips (seulement si pas déjà fourni par pa.json)
+        if not opts.get("clip_order"):
+            inline_order = rc.get("clip_order")
+            if (inline_order and isinstance(inline_order, list)
+                    and len(inline_order) == len(raw_paths)
+                    and sorted(inline_order) == list(range(len(raw_paths)))):
+                raw_paths = [raw_paths[i] for i in inline_order]
+                clips_raw = [clips_raw[i] for i in inline_order]
+                print(f"  Ordre viralité inline appliqué : {inline_order}")
+
+        # 2. Mode recommandé (punch / cinema / auto)
+        rec_mode = rc.get("mode", "").lower()
+        if rec_mode in ("punch", "cinema", "auto") and rec_mode != opts.get("mode", "auto"):
+            print(f"  Mode viralité : {opts.get('mode','auto').upper()} → {rec_mode.upper()}")
+            opts["mode"] = rec_mode
+
+        # 3. Durée totale cible depuis durées recommandées (mode punch)
+        if rc.get("mode", "").lower() == "punch":
+            rec_total = (rc.get("hook_dur",  opts.get("hook_dur",  2.0)) +
+                         rc.get("core_dur",  opts.get("core_dur",  2.5)) +
+                         rc.get("punch_dur", opts.get("punch_dur", 3.0)))
+            opts["cinema_dur"] = round(min(rec_total, 13), 2)
+            print(f"  Durée cible viralité (punch) : {opts['cinema_dur']}s")
 
     # Rendu des segments
     segments = []
