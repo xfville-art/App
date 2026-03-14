@@ -16,6 +16,8 @@ jobs:
           sudo apt-get install -y ffmpeg fonts-liberation
 
       - name: Execution Python
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python3 render.py
 
