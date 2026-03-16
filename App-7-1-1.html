@@ -463,8 +463,8 @@ select{width:100%;background:rgba(120,120,128,.09);border:none;padding:10px 28px
         <div class="range-row"><div class="range-lbl">Durée cible</div><div class="range-wrap"><input type="range" id="rCinDur" min="15" max="45" step="1" value="26" oninput="rng(this,'vCinDur')"></div><div class="range-val" id="vCinDur">26s</div></div>
         <div class="range-row"><div class="range-lbl">Clip min</div><div class="range-wrap"><input type="range" id="rCinMin" min="3" max="10" step="0.5" value="7" oninput="rng(this,'vCinMin')"></div><div class="range-val" id="vCinMin">7s</div></div>
         <div class="range-row"><div class="range-lbl">Clip max</div><div class="range-wrap"><input type="range" id="rCinMax" min="6" max="20" step="0.5" value="12" oninput="rng(this,'vCinMax')"></div><div class="range-val" id="vCinMax">12s</div></div>
-        <div class="range-row"><div class="range-lbl">Crossfade</div><div class="range-wrap"><input type="range" id="rCinXfade" min="0.1" max="0.5" step="0.05" value="0.2" oninput="rng(this,'vCinXfade')"></div><div class="range-val" id="vCinXfade">0.7s</div></div>
-        <div class="range-row"><div class="range-lbl">Zoom KB</div><div class="range-wrap"><input type="range" id="rKbZoom" min="1.0" max="1.08" step="0.01" value="1.0" oninput="rng(this,'vKbZoom','×')"></div><div class="range-val" id="vKbZoom">1.09×</div></div>
+        <div class="range-row"><div class="range-lbl">Crossfade</div><div class="range-wrap"><input type="range" id="rCinXfade" min="0.1" max="0.5" step="0.05" value="0.2" oninput="rng(this,'vCinXfade')"></div><div class="range-val" id="vCinXfade">0.2s</div></div>
+        <div class="range-row"><div class="range-lbl">Zoom KB</div><div class="range-wrap"><input type="range" id="rKbZoom" min="1.0" max="1.08" step="0.01" value="1.0" oninput="rng(this,'vKbZoom','×')"></div><div class="range-val" id="vKbZoom">1.0×</div></div>
         <div class="range-row"><div class="range-lbl">Letterbox</div><div class="range-wrap"><input type="range" id="rLbH" min="40" max="90" step="5" value="65" oninput="rng(this,'vLbH','px')"></div><div class="range-val" id="vLbH">65px</div></div>
       </div>
     </div>
@@ -669,9 +669,18 @@ function rng(el,vid,unit='s'){
   updateChips();
 }
 function initRanges(){
+  // Initialiser le track CSS et les labels texte pour tous les sliders
+  const unitMap={rCinXfade:'s',rKbZoom:'×',rLbH:'px',rScdet:'',rZoomSc:'×'};
   document.querySelectorAll('input[type=range]').forEach(el=>{
     const pct=((el.value-el.min)/(el.max-el.min))*100;
     el.style.setProperty('--pct',pct+'%');
+    // Mettre à jour le label texte correspondant
+    const vid=el.getAttribute('oninput')?.match(/rng\(this,'(\w+)'/)?.[1];
+    if(vid){
+      const unit=unitMap[el.id]||'s';
+      const span=document.getElementById(vid);
+      if(span) span.textContent=el.value+unit;
+    }
   });
 }
 
@@ -710,15 +719,22 @@ function getConfig(){
 
 function updateChips(){
   const c=getConfig();
+  const punchTotal=parseFloat((c.hook_dur+c.core_dur+c.punch_dur).toFixed(1));
   const items=[
     {label:{auto:'AUTO',punch:'PUNCH',cinema:'CINÉMA'}[c.mode]||c.mode.toUpperCase(),cls:{auto:'warn',punch:'info',cinema:'cinema'}[c.mode]||'info'},
-    ...(c.mode!=='cinema'?[
+    ...(c.mode==='punch'?[
+      {label:punchTotal+'s total',cls:'info'},
+      {label:'Hook '+c.hook_dur+'s',cls:'on'},
+      {label:'Core '+c.core_dur+'s',cls:'on'},
+      {label:'Punch '+c.punch_dur+'s',cls:'on'},
+    ]:[]),
+    ...(c.mode!=='cinema'&&c.mode!=='punch'?[
       {label:c.flash_cut?'Flash ✓':'Flash ✗',cls:c.flash_cut?'on':'off'},
       {label:c.zoom_punch?'Zoom ✓':'Zoom ✗',cls:c.zoom_punch?'on':'off'},
       {label:c.ai_text?'Textes IA':'Sans texte',cls:c.ai_text?'on':'off'},
       {label:c.auto_order?'Ordre auto':'Manuel',cls:c.auto_order?'on':'off'},
     ]:[]),
-    ...(c.mode!=='punch'?[
+    ...(c.mode==='cinema'?[
       {label:c.cinema_dur+'s',cls:'cinema'},
       {label:'KB ×'+c.cinema_kb_zoom,cls:'cinema'},
       {label:'xfade '+c.cinema_xfade+'s',cls:'cinema'},
@@ -1245,15 +1261,17 @@ async function monitorViraAnalysis(btn, attempt){
   }
   try {
     const res = await fetch(
-      `https://api.github.com/repos/${repo}/actions/runs?per_page=5`,
+      `https://api.github.com/repos/${repo}/actions/runs?per_page=10`,
       {headers:{'Authorization':`Bearer ${token}`}}
     ).then(r=>r.json());
 
     const runs = res.workflow_runs || [];
+    // Cherche d'abord un run Analyze récent, puis n'importe quel run récent
+    const cutoff = new Date(viraAnalysisDispatchTime) - 90000;
     const run  = runs.find(r =>
-      r.name && r.name.toLowerCase().includes('analyz') &&
-      new Date(r.created_at) >= new Date(viraAnalysisDispatchTime) - 60000
-    ) || runs.find(r => new Date(r.created_at) >= new Date(viraAnalysisDispatchTime) - 60000);
+      r.name && (r.name.toLowerCase().includes('analyz') || r.name.toLowerCase().includes('viracut')) &&
+      new Date(r.created_at) >= cutoff
+    ) || runs.find(r => new Date(r.created_at) >= cutoff);
 
     if(!run){ setTimeout(()=>monitorViraAnalysis(btn,attempt+1), 5000); return; }
 

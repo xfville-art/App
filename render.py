@@ -374,8 +374,9 @@ def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts):
 
     # ── Filtres video ────────────────────────────────────────────────
     # Pas de scale ici — déjà fait en sanitisation à la réception des clips
-    # Uniquement fps et grade colorimétrique
-    grade = "eq=saturation=0.95:brightness=-0.01:contrast=1.05"
+    # Uniquement fps et grade colorimétrique — style BD/carte collector Les Crados
+    # saturation légèrement boostée + contraste plus marqué pour look punchy
+    grade = "eq=saturation=1.10:brightness=-0.02:contrast=1.12,hue=h=0:s=1"
     vf = f"fps={fps},{grade}"
 
     # ── Extraction (avec seek en entree = ultra rapide) ───────────────
@@ -432,22 +433,33 @@ def assemble_cinema(segments, opts):
 
 def build_cinema_overlay_no_text(opts):
     W, H    = cfg(opts, "resolution").split("x")
-    Hi      = int(H)
+    Wi, Hi  = int(W), int(H)
     lb_h    = cfg(opts, "cinema_lb_h")
     total   = duration("_assembled.mp4")
-    fade_st = max(0.0, total - 0.5)
+    fade_out_st = max(0.0, total - 0.6)
+    fade_in_d   = 0.25  # fade-in vidéo propre au début
 
     lb = (
         f"drawbox=y=0:h={lb_h}:c=black@1:t=fill,"
         f"drawbox=y={Hi - lb_h}:h={lb_h}:c=black@1:t=fill"
     )
+    # Vignette légère pour look cinématique
+    vignette = "vignette=PI/4.5:eval=frame"
+    # Fade in + fade out vidéo
+    fades = f"fade=t=in:st=0:d={fade_in_d},fade=t=out:st={fade_out_st:.2f}:d=0.6"
+
+    vf = f"{lb},{vignette},{fades}"
+
+    # Audio : fade out calé sur la vraie durée (garde-fou min 0.5s de contenu)
+    audio_fade_d = min(0.8, total * 0.15)
+    audio_fade_st = max(0.0, total - audio_fade_d)
+
     run(
         f'ffmpeg -y -i _assembled.mp4 '
-        f'-vf "{lb}" -af "afade=t=out:st={fade_st:.2f}:d=0.5" '
+        f'-vf "{vf}" -af "afade=t=out:st={audio_fade_st:.2f}:d={audio_fade_d:.2f}" '
         f'-c:v libx264 -crf {cfg(opts,"crf")} _premain.mp4'
     )
     append_logo("_premain.mp4", opts)
-
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -713,10 +725,17 @@ def start():
         print(f"  Ordre clips : séquentiel (pas de recommandation viralité)")
 
     n        = len(raw_paths)
-    target   = min(cfg(opts, "cinema_dur"), 13)  # cap TikTok 13s max
+    # Durée cible selon le mode : PUNCH = hook+core+punch, CINEMA = cinema_dur UI (cap 60s TikTok)
+    mode_eff = opts.get("mode", "auto").lower()
+    if mode_eff == "punch":
+        target = (opts.get("hook_dur", 2.0) + opts.get("core_dur", 2.5) + opts.get("punch_dur", 3.0))
+        target = min(target, 15)  # PUNCH : 15s max
+    else:
+        target = min(cfg(opts, "cinema_dur"), 60)  # CINEMA/AUTO : cap TikTok 60s
     xf_b     = 0.2   # HARDCODE — ignore p.json (évite glitch xfade)
     clip_dur = max((target - xf_b * (n - 1)) / n, MIN_CLIP_DUR)
-    print(f"\n  Duree cible/segment : {clip_dur:.2f}s  |  xfade base : {xf_b}s\n")
+    print(f"\n  Mode effectif       : {mode_eff.upper()}")
+    print(f"  Duree cible total   : {target:.2f}s")
 
     # ── Analyse viralité avant rendu ───────────────────────────────
     vira_result = viralite_analysis(clips_raw, opts, raw_paths)
@@ -741,25 +760,48 @@ def start():
             print(f"  Mode viralité : {opts.get('mode','auto').upper()} → {rec_mode.upper()}")
             opts["mode"] = rec_mode
 
-        # 3. Durée totale cible depuis durées recommandées (mode punch)
+        # 3. Durée totale cible depuis durées recommandées
         if rc.get("mode", "").lower() == "punch":
             rec_total = (rc.get("hook_dur",  opts.get("hook_dur",  2.0)) +
                          rc.get("core_dur",  opts.get("core_dur",  2.5)) +
                          rc.get("punch_dur", opts.get("punch_dur", 3.0)))
-            opts["cinema_dur"] = round(min(rec_total, 13), 2)
+            opts["cinema_dur"] = round(min(rec_total, 15), 2)
             print(f"  Durée cible viralité (punch) : {opts['cinema_dur']}s")
-            # Recalculer clip_dur avec la nouvelle durée cible
-            target   = min(opts["cinema_dur"], 13)
+            target   = min(opts["cinema_dur"], 15)
             clip_dur = max((target - xf_b * (n - 1)) / n, MIN_CLIP_DUR)
-            print(f"  Durée segment recalculée      : {clip_dur:.2f}s")
+            print(f"  Durée segment recalculée (punch) : {clip_dur:.2f}s")
+        else:
+            # cinema / auto : respecter cinema_dur de l'UI
+            target   = min(opts.get("cinema_dur", cfg(opts, "cinema_dur")), 60)
+            clip_dur = max((target - xf_b * (n - 1)) / n, MIN_CLIP_DUR)
+            print(f"  Durée segment recalculée (cinema/auto) : {clip_dur:.2f}s")
+
+    # ── Durées par segment : PUNCH = proportionnel hook/core/punch ──
+    mode_final = opts.get("mode", "auto").lower()
+    if mode_final == "punch" and n >= 2:
+        hook_d  = float(opts.get("hook_dur",  2.0))
+        core_d  = float(opts.get("core_dur",  2.5))
+        punch_d = float(opts.get("punch_dur", 3.0))
+        if n == 2:
+            seg_durs = [hook_d, punch_d]
+        elif n == 3:
+            seg_durs = [hook_d, core_d, punch_d]
+        else:
+            # n > 3 : hook + (n-2) cores + punch
+            seg_durs = [hook_d] + [core_d] * (n - 2) + [punch_d]
+        print(f"  Durées PUNCH par segment : {[round(d,2) for d in seg_durs]}")
+    else:
+        seg_durs = [clip_dur] * n
+        print(f"  Durée/segment : {clip_dur:.2f}s  |  xfade base : {xf_b}s\n")
 
     # Rendu des segments
     segments = []
     for i, src in enumerate(raw_paths):
-        out = f"_cin_{i}.mp4"
+        out  = f"_cin_{i}.mp4"
+        sdur = seg_durs[i]
         print(f"{'─'*55}")
-        print(f"  [Segment {i+1}/{n}]")
-        seg = build_cinema_segment(src, out, clip_dur,
+        print(f"  [Segment {i+1}/{n}  cible={sdur:.2f}s]")
+        seg = build_cinema_segment(src, out, sdur,
                                    1.0, opts)  # HARDCODE kb_zoom=1.0 — pas de zoom sur clips AI
         segments.append(seg)
 
