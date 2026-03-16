@@ -687,16 +687,48 @@ def start():
         p   = f"_raw_{i}.mp4"
         with open(raw, "wb") as f:
             f.write(base64.b64decode(v["data"]))
-        # Re-encode : conserve le format original (pas de zoom/crop)
-        # scale dans le cadre 9:16, pad avec barres noires si ratio different
-        run(
-            f'ffmpeg -y -i "{raw}" '
-            f'-vf "scale={W}:{H}:force_original_aspect_ratio=decrease:flags=lanczos,'
-            f'pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps={fps}" '
-            f'-c:v libx264 -crf {crf} -preset fast -pix_fmt yuv420p '
-            f'-x264opts "keyint={fps}:no-scenecut" '
-            f'-bf 0 -c:a aac -ar 44100 -ac 2 "{p}"'
-        )
+
+        # Détecter les streams pour éviter le stream MJPEG parasite (ex: clips Grok)
+        probe = ffprobe(raw)
+        video_streams = [s for s in probe.get("streams", []) if s.get("codec_type") == "video"]
+        audio_streams = [s for s in probe.get("streams", []) if s.get("codec_type") == "audio"]
+
+        # Sélectionner le premier stream H264/HEVC — ignorer MJPEG thumbnail
+        h264_idx = None
+        for s in video_streams:
+            if s.get("codec_name") in ("h264", "hevc", "vp9", "av1"):
+                h264_idx = s.get("index")
+                break
+        if h264_idx is None and video_streams:
+            h264_idx = video_streams[0].get("index")
+
+        if len(video_streams) > 1:
+            codecs = [s.get("codec_name") for s in video_streams]
+            print(f"  Clip {i} : {len(video_streams)} streams vidéo {codecs} → stream #{h264_idx}")
+
+        map_v = f"-map 0:{h264_idx}" if h264_idx is not None else "-map 0:v:0"
+
+        # Re-encode : scale 9:16 + pad + GOP propre
+        if audio_streams:
+            run(
+                f'ffmpeg -y -i "{raw}" {map_v} -map 0:a:0 '
+                f'-vf "scale={W}:{H}:force_original_aspect_ratio=decrease:flags=lanczos,'
+                f'pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps={fps}" '
+                f'-c:v libx264 -crf {crf} -preset fast -pix_fmt yuv420p '
+                f'-x264opts "keyint={fps}:no-scenecut" '
+                f'-bf 0 -c:a aac -ar 44100 -ac 2 "{p}"'
+            )
+        else:
+            # Source sans audio → générer silence
+            run(
+                f'ffmpeg -y -i "{raw}" -f lavfi -i "anullsrc=r=44100:cl=stereo" {map_v} -map 1:a '
+                f'-vf "scale={W}:{H}:force_original_aspect_ratio=decrease:flags=lanczos,'
+                f'pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps={fps}" '
+                f'-c:v libx264 -crf {crf} -preset fast -pix_fmt yuv420p '
+                f'-x264opts "keyint={fps}:no-scenecut" '
+                f'-bf 0 -c:a aac -ar 44100 -ac 2 -shortest "{p}"'
+            )
+
         d = duration(p)
         print(f"  Clip {i} : {d:.2f}s  audio={has_audio(p)}")
         raw_paths.append(p)
@@ -730,8 +762,12 @@ def start():
     if mode_eff == "punch":
         target = (opts.get("hook_dur", 2.0) + opts.get("core_dur", 2.5) + opts.get("punch_dur", 3.0))
         target = min(target, 15)  # PUNCH : 15s max
+        # Plancher : au moins 2s par clip pour ne pas couper trop court
+        target = max(target, n * 2.0)
     else:
         target = min(cfg(opts, "cinema_dur"), 60)  # CINEMA/AUTO : cap TikTok 60s
+        # Plancher : au moins 3s par clip
+        target = max(target, n * 3.0)
     xf_b     = 0.2   # HARDCODE — ignore p.json (évite glitch xfade)
     clip_dur = max((target - xf_b * (n - 1)) / n, MIN_CLIP_DUR)
     print(f"\n  Mode effectif       : {mode_eff.upper()}")
