@@ -713,8 +713,8 @@ function getConfig(){
     cinema_xfade:parseFloat(document.getElementById('rCinXfade').value),
     cinema_kb_zoom:parseFloat(document.getElementById('rKbZoom').value),
     cinema_lb_h:parseInt(document.getElementById('rLbH').value),
-    // Valider que l'ordre recommandé correspond au nombre de clips actuels
-    clip_order:(_recommendedClipOrder && _recommendedClipOrder.length===clips.length)?_recommendedClipOrder:null,
+    // clip_order intentionnellement absent : l'ordre est déjà dans le tableau clips[]
+    // (applyRecommendedConfig réordonne clips[] directement)
   };
 }
 

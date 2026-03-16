@@ -734,19 +734,9 @@ def start():
         raw_paths.append(p)
 
     # ── Ordre des clips ────────────────────────────────────────────
-    # PRIORITÉ : clip_order de p.json (UI) > pa.json > séquentiel
-    # Le pa.json est IGNORÉ pour l'ordre : il peut être stale (session précédente)
-    # L'ordre viralité sera appliqué par l'analyse inline ci-dessous
-    clip_order = opts.get("clip_order")
-    if clip_order and isinstance(clip_order, list) and len(clip_order) == len(raw_paths):
-        if sorted(clip_order) == list(range(len(raw_paths))):
-            raw_paths = [raw_paths[i] for i in clip_order]
-            clips_raw = [clips_raw[i] for i in clip_order]
-            print(f"  Ordre UI appliqué : {clip_order}")
-        else:
-            print(f"  Ordre UI ignoré (indices invalides) : {clip_order}")
-    else:
-        print(f"  Ordre clips : séquentiel")
+    # L'ordre est déjà appliqué côté app (clips[] réordonné par applyRecommendedConfig)
+    # render.py traite toujours les clips dans l'ordre reçu — pas de réordonnancement ici
+    print(f"  Ordre clips : séquentiel (ordre défini par l'app)")
 
     n        = len(raw_paths)
     # Durée initiale selon le mode UI (sera potentiellement affinée par la viralité)
@@ -771,17 +761,9 @@ def start():
     if vira_result:
         rc = vira_result.get("recommended_config", {})
 
-        # 1. Ordre des clips (viralité inline — seulement si pas fourni par UI)
-        if not opts.get("clip_order"):
-            inline_order = rc.get("clip_order")
-            if (inline_order and isinstance(inline_order, list)
-                    and len(inline_order) == len(raw_paths)
-                    and sorted(inline_order) == list(range(len(raw_paths)))):
-                raw_paths = [raw_paths[i] for i in inline_order]
-                clips_raw = [clips_raw[i] for i in inline_order]
-                print(f"  Ordre viralité inline : {inline_order}")
+        # NB: clip_order ignoré ici — l'ordre est défini côté app dans clips[]
 
-        # 2. Mode recommandé
+        # 1. Mode recommandé
         rec_mode = rc.get("mode", "").lower()
         if rec_mode in ("punch", "cinema", "auto") and rec_mode != mode_eff:
             print(f"  Mode viralité : {mode_eff.upper()} → {rec_mode.upper()}")
