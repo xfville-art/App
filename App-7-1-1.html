@@ -771,6 +771,7 @@ function handleFiles(){
   const files=Array.from(document.getElementById('fi').files).slice(0,6);
   if(!files.length) return;
   clips=files.map((f,i)=>({file:f,role:'auto',idx:i}));
+  _recommendedClipOrder=null; // reset à chaque nouveau chargement
   renderFileList();
   document.getElementById('orderCard').style.display='block';
   document.getElementById('viraCard').style.display='block';
@@ -798,6 +799,7 @@ function cycleRole(i){
 
 function removeClip(i){
   clips.splice(i,1);
+  _recommendedClipOrder=null; // invalidé si la liste change
   if(!clips.length){
     document.getElementById('orderCard').style.display='none';
     document.getElementById('viraCard').style.display='none';
@@ -827,6 +829,7 @@ function dragDrop(e,i){
   document.querySelectorAll('.file-row').forEach(r=>{r.classList.remove('drag-over');r.style.opacity=''});
   if(dragSrc===null||dragSrc===i) return;
   const moved=clips.splice(dragSrc,1)[0];clips.splice(i,0,moved);
+  _recommendedClipOrder=null; // ordre manuel → invalider la recommandation précédente
   dragSrc=null;renderFileList();
 }
 
@@ -1346,10 +1349,21 @@ function applyRecommendedConfig(data){
   if(!rc) return;
   // Apply mode
   if(rc.mode) setMode(rc.mode);
-  // Apply durations
-  if(rc.hook_dur !== undefined){ document.getElementById('rHook').value = rc.hook_dur; rng(document.getElementById('rHook'),'vHook'); }
-  if(rc.core_dur !== undefined){ document.getElementById('rCore').value = rc.core_dur; rng(document.getElementById('rCore'),'vCore'); }
-  if(rc.punch_dur !== undefined){ document.getElementById('rPunch').value = rc.punch_dur; rng(document.getElementById('rPunch'),'vPunch'); }
+  // Apply durations — NE PAS écraser les valeurs UI si la viralité suggère plus court
+  // La viralité suggère souvent hook=1.5s qui est trop court pour les clips AI (6s)
+  // → on applique seulement si la valeur recommandée est > valeur UI actuelle
+  if(rc.hook_dur !== undefined){
+    const el=document.getElementById('rHook');
+    if(rc.hook_dur > parseFloat(el.value)){ el.value=rc.hook_dur; rng(el,'vHook'); }
+  }
+  if(rc.core_dur !== undefined){
+    const el=document.getElementById('rCore');
+    if(rc.core_dur > parseFloat(el.value)){ el.value=rc.core_dur; rng(el,'vCore'); }
+  }
+  if(rc.punch_dur !== undefined){
+    const el=document.getElementById('rPunch');
+    if(rc.punch_dur > parseFloat(el.value)){ el.value=rc.punch_dur; rng(el,'vPunch'); }
+  }
   // Apply effects
   if(rc.flash_cut !== undefined) document.getElementById('oFlash').checked = rc.flash_cut;
   if(rc.zoom_punch !== undefined) document.getElementById('oZoom').checked = rc.zoom_punch;

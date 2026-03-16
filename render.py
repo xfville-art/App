@@ -813,29 +813,42 @@ def start():
             print(f"  Durée segment (cinema/auto) : {clip_dur:.2f}s")
 
     # ── Durées par segment ──────────────────────────────────────────
-    # Plancher basé sur la durée réelle des sources (évite de couper les animations)
+    # Durées effectives = min(valeur UI/viralité, durée source dispo) mais plancher absolu
     src_durs = [duration(p) for p in raw_paths]
     src_avg  = sum(src_durs) / len(src_durs)
-    # Plancher = 40% de la durée source ou 2s, selon le plus grand
-    seg_floor = max(src_avg * 0.40, 2.0)
 
     mode_final = opts.get("mode", "auto").lower()
     if mode_final == "punch" and n >= 2:
-        # Planchers absolus : hook≥2s, core≥2s, punch≥3s (quelque soit la valeur UI/viralité)
-        hook_d  = max(float(opts.get("hook_dur",  2.0)), 2.0)
-        core_d  = max(float(opts.get("core_dur",  2.5)), 2.0)
-        punch_d = max(float(opts.get("punch_dur", 3.0)), 3.0)
+        # Pour chaque segment : respecter la durée source (pas dépasser) avec plancher 2s/3s
+        # Clip i → src_durs[i] disponible
+        raw_hook  = float(opts.get("hook_dur",  2.0))
+        raw_core  = float(opts.get("core_dur",  2.5))
+        raw_punch = float(opts.get("punch_dur", 3.0))
         if n == 2:
+            hook_d  = max(min(raw_hook,  src_durs[0]), 2.0)
+            punch_d = max(min(raw_punch, src_durs[1]), 3.0)
             seg_durs = [hook_d, punch_d]
         elif n == 3:
+            hook_d  = max(min(raw_hook,  src_durs[0]), 2.0)
+            core_d  = max(min(raw_core,  src_durs[1]), 2.0)
+            punch_d = max(min(raw_punch, src_durs[2]), 3.0)
             seg_durs = [hook_d, core_d, punch_d]
         else:
-            seg_durs = [hook_d] + [core_d] * (n - 2) + [punch_d]
-        print(f"  Plancher seg    : {seg_floor:.2f}s  (src moy {src_avg:.2f}s)")
+            seg_durs = []
+            for k, sd in enumerate(src_durs):
+                if k == 0:
+                    seg_durs.append(max(min(raw_hook, sd), 2.0))
+                elif k == len(src_durs) - 1:
+                    seg_durs.append(max(min(raw_punch, sd), 3.0))
+                else:
+                    seg_durs.append(max(min(raw_core, sd), 2.0))
+        print(f"  Durées source   : {[round(d,2) for d in src_durs]}")
         print(f"  Durées PUNCH    : {[round(d,2) for d in seg_durs]}")
     else:
-        seg_durs = [max(clip_dur, seg_floor)] * n
-        print(f"  Durée/segment   : {seg_durs[0]:.2f}s  (plancher {seg_floor:.2f}s)\n")
+        # CINEMA/AUTO : clip_dur déjà calculé, capper à la durée source
+        seg_durs = [min(clip_dur, sd) for sd in src_durs]
+        print(f"  Durées source   : {[round(d,2) for d in src_durs]}")
+        print(f"  Durée/segment   : {[round(d,2) for d in seg_durs]}\n")
 
 
     # Rendu des segments
