@@ -1079,7 +1079,7 @@ def apply_stickers(input_video, output_video, stickers, opts):
         + f' -i "{input_video}"'
         + " " + " ".join(input_args)
         + f' -filter_complex "{filter_str}"'
-        + f' -map "[vout]" -map "0:a:0" -c:v libx264 -crf {crf} -c:a copy "{output_video}"'
+        + f' -map "[vout]" -map "0:a:0" -c:v libx264 -crf {crf} -pix_fmt yuv420p -c:a copy "{output_video}"'
     )
     try:
         run(cmd)
