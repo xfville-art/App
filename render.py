@@ -673,174 +673,231 @@ import math as _math
 def _gen_sticker_png(stype, text, color_hex, size, out_path):
     """
     Génère un sticker PNG RGBA via Pillow.
-    stype : splat | impact | bubble | star | zap | arrow
+    Contour noir épais + ombre portée pour visibilité sur fond chargé.
     """
     try:
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image, ImageDraw, ImageFont, ImageFilter
     except ImportError:
         return False
 
-    W = H = size
+    # Canvas plus grand pour laisser de la place à l'ombre
+    PAD = max(12, size // 14)
+    W = H = size + PAD * 2
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d   = ImageDraw.Draw(img)
     cx, cy = W // 2, H // 2
+    # Fond blanc semi-opaque arrondi = toujours visible sur n'importe quel fond
+    bg_r = max(10, W // 8)
+    d.rounded_rectangle([PAD//2, PAD//2, W-PAD//2, H-PAD//2],
+                         radius=bg_r, fill=(255, 255, 255, 160))
 
-    # Convertir couleur hex → RGB
     ch = color_hex.lstrip("#")
     cr, cg, cb = int(ch[0:2],16), int(ch[2:4],16), int(ch[4:6],16)
-    col_main  = (cr, cg, cb, 230)
-    col_dark  = (max(0,cr-60), max(0,cg-60), max(0,cb-60), 255)
-    col_light = (min(255,cr+80), min(255,cg+80), min(255,cb+80), 180)
+    col_main  = (cr, cg, cb, 255)
+    col_dark  = (max(0,cr-80), max(0,cg-80), max(0,cb-80), 255)
+    col_light = (min(255,cr+100), min(255,cg+100), min(255,cb+100), 200)
+    stroke    = (0, 0, 0, 255)  # contour noir
+
+    r_base = int(size * 0.38)
 
     try:
-        font_big = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", max(14, size//5))
-        font_sm  = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", max(11, size//7))
+        font_big = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", max(16, size//4))
+        font_sm  = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", max(12, size//6))
     except Exception:
         font_big = font_sm = ImageFont.load_default()
 
+    def draw_stroke_ellipse(draw, bbox, fill, stroke_col, stroke_w=4):
+        sw = stroke_w
+        draw.ellipse([bbox[0]-sw, bbox[1]-sw, bbox[2]+sw, bbox[3]+sw], fill=stroke_col)
+        draw.ellipse(bbox, fill=fill)
+
     if stype == "splat":
         import random as _rnd
-        _rnd.seed(hash(text) % 9999)
-        r = int(W * 0.38)
+        _rnd.seed(hash(text or "splat") % 9999)
+        r = r_base
+        # Ombre
+        shadow = Image.new("RGBA", (W, H), (0,0,0,0))
+        sd = ImageDraw.Draw(shadow)
+        sd.ellipse([cx-r+4, cy-r+6, cx+r+4, cy+r+6], fill=(0,0,0,100))
+        img.alpha_composite(shadow)
+        d = ImageDraw.Draw(img)
+        # Contour
+        d.ellipse([cx-r-5, cy-r-5, cx+r+5, cy+r+5], fill=stroke)
         d.ellipse([cx-r, cy-r, cx+r, cy+r], fill=col_main)
         for angle_deg in range(0, 360, 28):
             angle = _math.radians(angle_deg + _rnd.randint(-12,12))
-            dist = r + _rnd.randint(int(W*0.08), int(W*0.20))
+            dist = r + _rnd.randint(int(size*0.08), int(size*0.18))
             bx = cx + int(dist * _math.cos(angle))
             by = cy + int(dist * _math.sin(angle))
-            br = _rnd.randint(int(W*0.05), int(W*0.11))
+            br = _rnd.randint(int(size*0.06), int(size*0.12))
+            d.ellipse([bx-br-3, by-br-3, bx+br+3, by+br+3], fill=stroke)
             d.ellipse([bx-br, by-br, bx+br, by+br], fill=col_main)
         d.ellipse([cx-r//3, cy-r//2, cx, cy-r//6], fill=col_light)
         if text:
-            d.text((cx, cy), text[:10], fill=(20,20,20,220), font=font_big, anchor="mm")
+            # Stroke texte
+            for dx,dy in [(-2,0),(2,0),(0,-2),(0,2)]:
+                d.text((cx+dx, cy+dy), text[:10], fill=stroke, font=font_big, anchor="mm")
+            d.text((cx, cy), text[:10], fill=(255,255,255,255), font=font_big, anchor="mm")
 
     elif stype == "impact":
-        rings = [(230,60,0,200),(255,140,0,160),(255,220,0,120),(255,255,120,80)]
+        rings = [(220,50,0,230),(255,130,0,190),(255,210,0,150),(255,255,100,110)]
         for i, rc in enumerate(rings):
-            r = int(W*0.46) - i*int(W*0.09)
-            lw = max(2, int(W*0.025)) - i
+            r = int(size*0.44) - i*int(size*0.09)
+            lw = max(3, int(size*0.032)) - i
+            # Contour noir
+            d.ellipse([cx-r-lw-2, cy-r-lw-2, cx+r+lw+2, cy+r+lw+2], outline=(0,0,0,200), width=lw+2)
             d.ellipse([cx-r, cy-r, cx+r, cy+r], outline=rc, width=lw)
-        d.ellipse([cx-int(W*0.07), cy-int(W*0.07), cx+int(W*0.07), cy+int(W*0.07)], fill=(255,60,0,240))
+        d.ellipse([cx-int(size*0.09)-3, cy-int(size*0.09)-3,
+                   cx+int(size*0.09)+3, cy+int(size*0.09)+3], fill=stroke)
+        d.ellipse([cx-int(size*0.09), cy-int(size*0.09),
+                   cx+int(size*0.09), cy+int(size*0.09)], fill=(255,60,0,255))
 
     elif stype == "bubble":
-        bx, by = int(W*0.08), int(W*0.08)
-        bw, bh = int(W*0.84), int(H*0.60)
-        d.rounded_rectangle([bx,by,bx+bw,by+bh], radius=int(W*0.09),
-                             fill=(255,255,255,240), outline=(20,20,20,255), width=3)
-        tail = [(bx+int(bw*0.15), by+bh), (bx+int(bw*0.40), by+bh), (bx+int(bw*0.08), by+bh+int(H*0.22))]
-        d.polygon(tail, fill=(255,255,255,240))
-        d.line([tail[0],tail[2]], fill=(20,20,20,255), width=3)
-        d.line([tail[2],tail[1]], fill=(20,20,20,255), width=3)
+        bx, by = PAD, PAD
+        bw, bh = int(size*0.84), int(size*0.60)
+        # Ombre
+        d.rounded_rectangle([bx+4, by+6, bx+bw+4, by+bh+6], radius=int(size*0.09), fill=(0,0,0,120))
+        # Contour noir
+        d.rounded_rectangle([bx-3, by-3, bx+bw+3, by+bh+3], radius=int(size*0.10),
+                             fill=stroke)
+        d.rounded_rectangle([bx, by, bx+bw, by+bh], radius=int(size*0.09),
+                             fill=(255,255,255,245))
+        tail = [(bx+int(bw*0.15), by+bh), (bx+int(bw*0.40), by+bh),
+                (bx+int(bw*0.08), by+bh+int(size*0.22))]
+        d.polygon([(p[0]-2,p[1]+2) for p in tail], fill=stroke)
+        d.polygon(tail, fill=(255,255,255,245))
         if text:
-            lines = text[:20].split(" ")
-            mid = len(lines)//2 + 1
-            line1 = " ".join(lines[:mid])
-            line2 = " ".join(lines[mid:])
-            d.text((bx+bw//2, by+bh//2 - int(H*0.06)), line1, fill=(200,0,0,255), font=font_big, anchor="mm")
-            if line2:
-                d.text((bx+bw//2, by+bh//2 + int(H*0.08)), line2, fill=(40,40,40,220), font=font_sm, anchor="mm")
+            lines = text.split(" ")
+            mid = max(1, len(lines)//2)
+            l1, l2 = " ".join(lines[:mid]), " ".join(lines[mid:])
+            ty = by + bh//2 - (int(size*0.07) if l2 else 0)
+            for dx,dy in [(-2,0),(2,0),(0,-2),(0,2)]:
+                d.text((bx+bw//2+dx, ty+dy), l1, fill=stroke, font=font_big, anchor="mm")
+            d.text((bx+bw//2, ty), l1, fill=(200,0,0,255), font=font_big, anchor="mm")
+            if l2:
+                for dx,dy in [(-1,0),(1,0),(0,-1),(0,1)]:
+                    d.text((bx+bw//2+dx, ty+int(size*0.16)+dy), l2, fill=stroke, font=font_sm, anchor="mm")
+                d.text((bx+bw//2, ty+int(size*0.16)), l2, fill=(40,40,40,255), font=font_sm, anchor="mm")
 
     elif stype == "star":
         pts = []
         for i in range(16):
             angle = _math.radians(i * 22.5 - 90)
-            r = int(W*0.46) if i%2==0 else int(W*0.25)
+            r = int(size*0.44) if i%2==0 else int(size*0.24)
             pts.append((cx + r*_math.cos(angle), cy + r*_math.sin(angle)))
-        d.polygon(pts, fill=(255,220,0,240))
-        d.polygon(pts, outline=(20,20,20,200), width=2)
+        # Ombre
+        shadow_pts = [(x+4, y+5) for x,y in pts]
+        d.polygon(shadow_pts, fill=(0,0,0,100))
+        # Contour
+        outline_pts = [(cx + (r+4)*_math.cos(_math.radians(i*22.5-90)),
+                        cy + (r+4)*_math.sin(_math.radians(i*22.5-90)))
+                       for i,r in [(i, int(size*0.44) if i%2==0 else int(size*0.24))
+                                   for i in range(16)]]
+        d.polygon(outline_pts, fill=stroke)
+        d.polygon(pts, fill=(255,220,0,250))
         if text:
             parts = text.split(" ", 1)
-            d.text((cx, cy-int(H*0.07)), parts[0][:8], fill=(200,0,0,255), font=font_big, anchor="mm")
+            for dx,dy in [(-2,0),(2,0),(0,-2),(0,2)]:
+                d.text((cx+dx, cy-int(size*0.07)+dy), parts[0][:8], fill=stroke, font=font_big, anchor="mm")
+            d.text((cx, cy-int(size*0.07)), parts[0][:8], fill=(200,0,0,255), font=font_big, anchor="mm")
             if len(parts)>1:
-                d.text((cx, cy+int(H*0.10)), parts[1][:8], fill=(20,20,20,200), font=font_sm, anchor="mm")
+                for dx,dy in [(-1,0),(1,0)]:
+                    d.text((cx+dx, cy+int(size*0.12)+dy), parts[1][:8], fill=stroke, font=font_sm, anchor="mm")
+                d.text((cx, cy+int(size*0.12)), parts[1][:8], fill=(30,30,30,255), font=font_sm, anchor="mm")
 
     elif stype == "zap":
         zap = [
-            (int(W*0.55),int(H*0.04)), (int(W*0.28),int(H*0.50)),
-            (int(W*0.50),int(H*0.50)), (int(W*0.22),int(H*0.96)),
+            (int(W*0.55),int(H*0.05)), (int(W*0.28),int(H*0.50)),
+            (int(W*0.50),int(H*0.50)), (int(W*0.22),int(H*0.95)),
             (int(W*0.72),int(H*0.44)), (int(W*0.50),int(H*0.44)),
-            (int(W*0.72),int(H*0.04))
+            (int(W*0.72),int(H*0.05))
         ]
-        d.polygon(zap, fill=(255,240,0,250))
-        d.polygon(zap, outline=(255,120,0,255), width=2)
+        shadow_zap = [(x+3, y+4) for x,y in zap]
+        d.polygon(shadow_zap, fill=(0,0,0,130))
+        stroke_zap = [(int(W*0.55)-3,int(H*0.05)-3),(int(W*0.28)-3,int(H*0.50)),(int(W*0.50)-3,int(H*0.50)),
+                      (int(W*0.22)-3,int(H*0.95)+3),(int(W*0.72)+3,int(H*0.44)),(int(W*0.50)+3,int(H*0.44)),
+                      (int(W*0.72)+3,int(H*0.05)-3)]
+        d.polygon(stroke_zap, fill=stroke)
+        d.polygon(zap, fill=(255,240,0,255))
 
     elif stype == "arrow":
-        # Flèche pointant à gauche
-        tip_x = int(W*0.08)
-        shaft_pts = [
+        pts_a = [
             (int(W*0.92),int(H*0.36)),(int(W*0.92),int(H*0.64)),
             (int(W*0.45),int(H*0.64)),(int(W*0.45),int(H*0.82)),
-            (tip_x,cy),
+            (int(W*0.08),cy),
             (int(W*0.45),int(H*0.18)),(int(W*0.45),int(H*0.36))
         ]
-        d.polygon(shaft_pts, fill=col_main)
-        d.polygon(shaft_pts, outline=col_dark, width=2)
+        shadow_a = [(x+3, y+4) for x,y in pts_a]
+        d.polygon(shadow_a, fill=(0,0,0,130))
+        stroke_a = [(x-2 if x<cx else x+2, y-2 if y<cy else y+2) for x,y in pts_a]
+        d.polygon(stroke_a, fill=stroke)
+        d.polygon(pts_a, fill=col_main)
 
+    # Léger flou sur l'ombre portée pour adoucir
     img.save(out_path)
     return True
 
 
+
 def _sticker_overlay_filter(stickers, video_w, video_h):
     """
-    Construit la filter_complex FFmpeg pour superposer N stickers animés.
-    Utilise fade filter sur chaque sticker (alpha=1) + enable pour le timing.
-    Retourne (input_args, filter_str, nb_inputs_added)
+    Filter_complex FFmpeg — overlay PNG stickers avec fade alpha via loop+trim.
+    Approche robuste : chaque PNG est loopé sur toute la durée vidéo,
+    le timing est géré par enable + fade filter local.
     """
     if not stickers:
         return [], "", 0
 
-    input_args = []
+    input_args  = []
     filter_parts = []
-    prev_label = "0:v"
+    prev_label  = "0:v"
     nb_ok = 0
 
     for idx, s in enumerate(stickers):
         img_path = f"_sticker_{idx}.png"
-        stype = s.get("type",    "star")
-        text  = s.get("text",    "")
-        color = s.get("color",   "#FF2200")
-        sz    = s.get("size",    int(video_w * 0.28))  # 28% largeur par défaut
-        x_pct = s.get("x_pct",  0.8)
-        y_pct = s.get("y_pct",  0.3)
-        t0    = s.get("t_start", 0.5)
-        tdur  = s.get("t_dur",   1.2)
-        anim  = s.get("anim",    "pop")
+        stype = s.get("type",   "star")
+        text  = s.get("text",   "")
+        color = s.get("color",  "#FF2200")
+        sz    = s.get("size",   int(video_w * 0.28))
+        x_pct = s.get("x_pct", 0.82)
+        y_pct = s.get("y_pct", 0.38)
+        t0    = float(s.get("t_start", 0.8))
+        tdur  = float(s.get("t_dur",   1.3))
+        anim  = s.get("anim",   "pop")
 
         ok = _gen_sticker_png(stype, text, color, sz, img_path)
         if not ok:
             continue
 
-        # Position pixel (coin haut-gauche)
+        # Clamp position dans la zone visible (hors letterbox 65px)
+        lb, margin = 65, 15
         px = int(video_w  * x_pct - sz / 2)
         py = int(video_h * y_pct - sz / 2)
-        px = max(0, min(px, video_w  - sz))
-        py = max(0, min(py, video_h - sz))
+        px = max(margin, min(px, video_w  - sz - margin))
+        py = max(lb + margin, min(py, video_h - lb - sz - margin))
 
         t_end    = t0 + tdur
-        fade_in  = min(0.15, tdur * 0.18)
-        fade_out = min(0.18, tdur * 0.20)
+        fade_in  = min(0.12, tdur * 0.15)
+        fade_out = min(0.15, tdur * 0.18)
         hold     = max(0.1, tdur - fade_in - fade_out)
         enable   = f"between(t,{t0:.3f},{t_end:.3f})"
 
-        # Filtre sur le sticker : scale + fade alpha
-        # Le fade est appliqué en temps local (depuis PTS=0 du sticker)
-        # puis on décale via setpts pour qu'il apparaisse au bon moment
-        px_expr = str(px)
-        if anim == "shake":
-            px_expr = f"{px}+if(between(t,{t0:.3f},{t_end:.3f}),sin(t*50)*5,0)"
-
-        # Shake : on applique un léger crop+pad pour simuler un décalage horizontal
-        # en alternant entre deux versions — simplifié : juste fade sans shake
+        # Chaîne de filtre sur le PNG :
+        # 1. scale à la bonne taille
+        # 2. loop pour couvrir toute la durée de la vidéo (999 frames suffit)
+        # 3. fade in puis fade out (en temps local depuis le début du PNG)
+        # 4. setpts pour décaler le début au bon moment dans la timeline
         vf_sticker = (
             f"[{idx+1}:v]"
-            f"scale={sz}:{sz},"
+            f"scale={sz}:{sz}:flags=lanczos,"
             f"format=rgba,"
+            f"loop=loop=-1:size=1,"
+            f"trim=start=0:end={tdur:.3f},"
             f"fade=t=in:st=0:d={fade_in:.3f}:alpha=1,"
             f"fade=t=out:st={fade_in+hold:.3f}:d={fade_out:.3f}:alpha=1,"
             f"setpts=PTS+{t0:.3f}/TB"
             f"[s{idx}]"
         )
-        # x position fixe (pas d'expression dynamique dans overlay x=)
         overlay_f = (
             f"[{prev_label}][s{idx}]"
             f"overlay=x={px}:y={py}:format=auto:enable='{enable}'"
@@ -856,12 +913,17 @@ def _sticker_overlay_filter(stickers, video_w, video_h):
     if not filter_parts:
         return [], "", 0
 
-    # Pas de copy final — le dernier label est directement [vout]
-    # Renommer le dernier label en vout
-    last = f"[v{nb_ok-1}]"
-    final_filter = ";".join(filter_parts).replace(last, "[vout]", 1)
-    # Si nb_ok==0 après boucle, ce cas est déjà géré
+    # Assembler le filter_complex et renommer le dernier [vN] en [vout]
+    last_label = f"[v{nb_ok-1}]"
+    chain = ";".join(filter_parts)
+    # Remplacer la dernière occurrence du label final par [vout]
+    last_idx = chain.rfind(last_label)
+    if last_idx != -1:
+        final_filter = chain[:last_idx] + "[vout]" + chain[last_idx+len(last_label):]
+    else:
+        final_filter = chain
     return input_args, final_filter, nb_ok
+
 
 
 def sticker_analysis(segments, opts, vira_result):
@@ -936,7 +998,7 @@ def sticker_analysis(segments, opts, vira_result):
 
     stickers = []
     for s in stickers_raw[:3]:
-        sz = max(140, min(280, int(W_px * float(s.get("size_pct", 0.26)))))
+        sz = max(200, min(300, int(W_px * float(s.get("size_pct", 0.28)))))
         t0 = min(float(s.get("t_start", 1.0)), max(0.5, content_dur - 1.5))
         stickers.append({
             "type":    s.get("type",  "star"),
@@ -958,15 +1020,17 @@ def _default_stickers(W_px, content_dur):
     """Stickers par défaut quand le LLM n'est pas disponible."""
     if content_dur < 2.0:
         return []
-    sz = max(160, int(W_px * 0.28))
+    sz = max(220, int(W_px * 0.32))  # 32% de largeur = ~230px sur 720p
     stickers = [
-        {"type":"splat","text":"","color":"#22EE22","size":sz,
-         "x_pct":0.82,"y_pct":0.18,"t_start":min(0.8,content_dur*0.12),"t_dur":1.3,"anim":"pop"},
+        # Coin haut-droite — splat orange vif (contraste avec les cartes sombres/vertes)
+        {"type":"splat","text":"","color":"#FF6600","size":sz,
+         "x_pct":0.84,"y_pct":0.38,"t_start":min(0.8,content_dur*0.12),"t_dur":1.3,"anim":"pop"},
     ]
     if content_dur > 4.0:
+        # Côté gauche milieu — zap jaune électrique (visible sur tout fond)
         stickers.append(
-            {"type":"impact","text":"","color":"#FF4400","size":sz,
-             "x_pct":0.12,"y_pct":0.65,"t_start":content_dur*0.55,"t_dur":1.1,"anim":"pop"}
+            {"type":"zap","text":"","color":"#FFE000","size":sz,
+             "x_pct":0.20,"y_pct":0.45,"t_start":content_dur*0.55,"t_dur":1.1,"anim":"pop"}
         )
     print(f"  [Stickers] {len(stickers)} sticker(s) par défaut appliqués")
     return stickers
