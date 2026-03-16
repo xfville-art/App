@@ -866,108 +866,110 @@ def _sticker_overlay_filter(stickers, video_w, video_h):
 
 def sticker_analysis(segments, opts, vira_result):
     """
-    Demande au LLM de placer des stickers intelligents sur la vidéo.
-    Retourne une liste de sticker dicts ou [] si échec.
+    Demande au LLM de placer des stickers intelligents.
+    Retourne une liste de sticker dicts, ou des stickers par défaut si LLM absent/echec.
     """
     api_key = os.environ.get("GITHUB_TOKEN", "")
-    if not api_key:
-        print("  [Stickers] GITHUB_TOKEN absent — stickers désactivés")
-        return []
 
     if not opts.get("stickers", True):
         print("  [Stickers] Désactivés par config")
         return []
 
     W, H = cfg(opts, "resolution").split("x")
-    mode = opts.get("mode", "auto")
+    W_px = int(W)
 
-    # Résumé des segments pour le LLM
+    # Durée de contenu réel (sans logo 2.5s)
+    content_dur = sum(s["dur"] for s in segments)
+
+    # Construire le résumé des segments avec timecodes absolus
     segs_lines = []
+    t_cursor = 0.0
     for i, s in enumerate(segments):
         role = "hook" if i == 0 else ("punch" if i == len(segments)-1 else "core")
-        segs_lines.append(f"  Segment {i+1} : durée={s['dur']:.2f}s  rôle={role}")
+        segs_lines.append(
+            f"  Segment {i+1} : t={t_cursor:.1f}s→{t_cursor+s['dur']:.1f}s  "
+            f"durée={s['dur']:.2f}s  rôle={role}"
+        )
+        t_cursor += s["dur"]
     segs_desc = "\n".join(segs_lines)
-    # Infos viralité si dispo
+
     vira_recs = ""
     if vira_result:
         recs = vira_result.get("recs", [])
-        vira_recs = "  Analyse viralité : " + " | ".join(r["text"] for r in recs[:3])
+        vira_recs = "  Viralité : " + " | ".join(r["text"] for r in recs[:3])
 
-    prompt = f"""Tu es un expert TikTok Les Crados (cartes satiriques absurdes style Garbage Pail Kids).
-Place des stickers animés intelligents pour amplifier l'impact de la vidéo.
+    if not api_key:
+        print("  [Stickers] GITHUB_TOKEN absent — stickers par défaut")
+        return _default_stickers(W_px, content_dur)
 
-VIDÉO : {mode.upper()} mode, {W}x{H}, {len(segments)} segments
-{segs_desc}
-{vira_recs}
-
-STICKERS DISPONIBLES :
-  splat   — tache de slime verte qui éclabousse (action physique, moment gore)
-  impact  — ondes de choc concentriques orange/rouge (coup, choc, révélation)
-  bubble  — bulle de dialogue blanche avec texte (réplique choc, commentaire)
-  star    — étoile jaune BD avec texte (exclamation, moment WOW)
-  zap     — éclair jaune (énergie, surprise, transition)
-  arrow   — flèche rouge (attirer l'attention sur un détail)
-
-RÈGLES :
-  - Maximum 3 stickers au total
-  - Chaque sticker dans une zone différente de l'écran
-  - t_start = moment précis où le sticker doit apparaître (en secondes depuis le début)
-  - x_pct/y_pct = position centre sticker (0.0=gauche/haut, 1.0=droite/bas)
-  - Éviter le centre (texte/action principale), préférer les bords
-  - sticker "bubble" uniquement avec un texte court percutant en français (max 15 chars)
-  - sticker "star" uniquement avec un mot choc (max 8 chars)
-  - Les autres types : text = "" (vide)
-  - t_dur entre 0.8 et 1.8s
-  - anim : "pop" pour apparition, "shake" pour vibration, "fade" pour discret
-
-Réponds UNIQUEMENT en JSON valide :
-{{
-  "stickers": [
-    {{
-      "type": "<splat|impact|bubble|star|zap|arrow>",
-      "text": "<texte ou vide>",
-      "color": "<hex couleur principale>",
-      "size_pct": <0.15 à 0.30 fraction de la largeur vidéo>,
-      "x_pct": <0.0 à 1.0>,
-      "y_pct": <0.0 à 1.0>,
-      "t_start": <float secondes>,
-      "t_dur": <float secondes>,
-      "anim": "<pop|shake|fade>"
-    }}
-  ]
-}}"""
+    prompt = (
+        f"Tu es un expert TikTok Les Crados (cartes satiriques style Garbage Pail Kids).\n"
+        f"Place des stickers animés pour amplifier l'impact. Vidéo = {content_dur:.1f}s (hors logo).\n\n"
+        f"SEGMENTS :\n{segs_desc}\n{vira_recs}\n\n"
+        f"STICKERS : splat (slime), impact (ondes choc), bubble (texte bulle ≤12 chars), "
+        f"star (texte exclamation ≤8 chars), zap (éclair)\n\n"
+        f"RÈGLES : 2-3 stickers · t_start < {content_dur-1.0:.1f}s · "
+        f"x_pct < 0.25 ou > 0.75 (bords) · size_pct 0.24-0.32 · t_dur 1.0-1.8s\n\n"
+        f"JSON UNIQUEMENT :\n"
+        f"{{\"stickers\": [{{"
+        f"\"type\":\"<splat|impact|bubble|star|zap>\","
+        f"\"text\":\"<vide ou texte>\"," 
+        f"\"color\":\"<hex>\","
+        f"\"size_pct\":<float>,"
+        f"\"x_pct\":<float>,"
+        f"\"y_pct\":<float>,"
+        f"\"t_start\":<float>,"
+        f"\"t_dur\":<float>"
+        f"}}]}}"
+    )
 
     print("  [Stickers] Analyse IA en cours…")
     try:
         raw = _call_github_models(api_key, prompt)
         data = _extract_json(raw)
         stickers_raw = data.get("stickers", [])
+        if not stickers_raw:
+            raise ValueError("Liste vide")
     except Exception as e:
-        print(f"  [Stickers] Erreur API : {e}")
-        return []
+        print(f"  [Stickers] Erreur API : {e} — stickers par défaut")
+        return _default_stickers(W_px, content_dur)
 
-    # Résoudre size_pct → pixels
-    W_px = int(W)
     stickers = []
     for s in stickers_raw[:3]:
-        sz = max(80, min(300, int(W_px * s.get("size_pct", 0.22))))
+        sz = max(140, min(280, int(W_px * float(s.get("size_pct", 0.26)))))
+        t0 = min(float(s.get("t_start", 1.0)), max(0.5, content_dur - 1.5))
         stickers.append({
-            "type":    s.get("type",    "star"),
-            "text":    s.get("text",    ""),
-            "color":   s.get("color",   "#FF2200"),
+            "type":    s.get("type",  "star"),
+            "text":    s.get("text",  ""),
+            "color":   s.get("color", "#FF2200"),
             "size":    sz,
-            "x_pct":   float(s.get("x_pct",   0.8)),
-            "y_pct":   float(s.get("y_pct",   0.3)),
-            "t_start": float(s.get("t_start", 1.0)),
-            "t_dur":   float(s.get("t_dur",   1.2)),
-            "anim":    s.get("anim",    "pop"),
+            "x_pct":   float(s.get("x_pct",  0.82)),
+            "y_pct":   float(s.get("y_pct",  0.25)),
+            "t_start": t0,
+            "t_dur":   min(float(s.get("t_dur", 1.3)), content_dur - t0),
+            "anim":    "pop",
         })
-        print(f"    Sticker {s.get('type')} '{s.get('text','')}' "
-              f"@ t={s.get('t_start'):.1f}s  "
-              f"pos=({s.get('x_pct'):.2f},{s.get('y_pct'):.2f})")
+        print(f"    🎯 {stickers[-1]['type']:8s} @ {t0:.1f}s  pos=({stickers[-1]['x_pct']:.2f},{stickers[-1]['y_pct']:.2f})")
 
     return stickers
 
+
+def _default_stickers(W_px, content_dur):
+    """Stickers par défaut quand le LLM n'est pas disponible."""
+    if content_dur < 2.0:
+        return []
+    sz = max(160, int(W_px * 0.28))
+    stickers = [
+        {"type":"splat","text":"","color":"#22EE22","size":sz,
+         "x_pct":0.82,"y_pct":0.18,"t_start":min(0.8,content_dur*0.12),"t_dur":1.3,"anim":"pop"},
+    ]
+    if content_dur > 4.0:
+        stickers.append(
+            {"type":"impact","text":"","color":"#FF4400","size":sz,
+             "x_pct":0.12,"y_pct":0.65,"t_start":content_dur*0.55,"t_dur":1.1,"anim":"pop"}
+        )
+    print(f"  [Stickers] {len(stickers)} sticker(s) par défaut appliqués")
+    return stickers
 
 def apply_stickers(input_video, output_video, stickers, opts):
     """
@@ -1159,7 +1161,13 @@ def start():
     src_avg  = sum(src_durs) / len(src_durs)
 
     mode_final = opts.get("mode", "auto").lower()
-    if mode_final == "punch" and n >= 2:
+    if mode_final == "punch" and n == 1:
+        # 1 seul clip en mode PUNCH → utiliser toute la source disponible
+        # Les durées hook/punch n'ont pas de sens avec un seul clip
+        seg_durs = [src_durs[0]]
+        print(f"  Durées source   : {[round(d,2) for d in src_durs]}")
+        print(f"  Durée/segment   : [{src_durs[0]:.2f}]  (1 clip — durée complète)")
+    elif mode_final == "punch" and n >= 2:
         # Pour chaque segment : respecter la durée source (pas dépasser) avec plancher 2s/3s
         # Clip i → src_durs[i] disponible
         raw_hook  = float(opts.get("hook_dur",  2.0))
