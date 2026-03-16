@@ -443,6 +443,7 @@ select{width:100%;background:rgba(120,120,128,.09);border:none;padding:10px 28px
         <div class="toggle-row"><div class="toggle-info"><div class="toggle-lbl">Zoom punch</div><div class="toggle-desc">Zoom 1.08× ease-out sur le moment clé</div></div><label class="sw"><input type="checkbox" id="oZoom" checked onchange="updateChips()"><div class="sw-s"></div></label></div>
         <div class="toggle-row"><div class="toggle-info"><div class="toggle-lbl">Colour grading</div><div class="toggle-desc">Hook chaud · Core neutre · Punch froid</div></div><label class="sw"><input type="checkbox" id="oGrade" checked onchange="updateChips()"><div class="sw-s"></div></label></div>
         <div class="toggle-row"><div class="toggle-info"><div class="toggle-lbl">Textes animés IA</div><div class="toggle-desc">Hook rouge · Core slide · Punchline jaune</div></div><label class="sw"><input type="checkbox" id="oText" checked onchange="updateChips()"><div class="sw-s"></div></label></div>
+        <div class="toggle-row"><div class="toggle-info"><div class="toggle-lbl">🎯 Stickers IA</div><div class="toggle-desc">Splat · Étoile · Bulle · Éclair — placés par l'IA selon l'action</div></div><label class="sw"><input type="checkbox" id="oStickers" checked onchange="updateChips()"><div class="sw-s"></div></label></div>
         <div class="toggle-row"><div class="toggle-info"><div class="toggle-lbl">Ordre automatique</div><div class="toggle-desc">L'IA détecte hook / core / punchline</div></div><label class="sw"><input type="checkbox" id="oAuto" checked onchange="updateChips()"><div class="sw-s"></div></label></div>
       </div>
       <div class="card">
@@ -693,6 +694,7 @@ function getConfig(){
     audio_br:parseInt(document.getElementById('oAudio').value),
     fade_dur:parseFloat(document.getElementById('oFade').value),
     ai_text:document.getElementById('oText').checked,
+    stickers:document.getElementById('oStickers').checked,
     custom_hook:document.getElementById('cHook').value.trim(),
     custom_punch:document.getElementById('cPunch').value.trim(),
     hook_dur:parseFloat(document.getElementById('rHook').value),
@@ -746,6 +748,7 @@ function updateChips(){
     ...(c.custom_hook?[{label:'HOOK '+c.custom_hook.slice(0,12),cls:'on'}]:[]),
     ...(c.custom_punch?[{label:'PUNCH '+c.custom_punch.slice(0,12),cls:'on'}]:[]),
     ...(c.text_bg?[{label:'Fond texte',cls:'on'}]:[]),
+    {label:c.stickers?'🎯 Stickers IA':'Stickers OFF',cls:c.stickers?'on':'off'},
   ];
   document.getElementById('chips').innerHTML=items.map(i=>`<span class="chip ${i.cls}">${i.label}</span>`).join('');
 }

@@ -664,6 +664,351 @@ Réponds UNIQUEMENT en JSON valide, zéro texte avant ou après :
     return result
 
 
+
+# ═══════════════════════════════════════════════════════════════════════
+# STICKER ENGINE  (v1) — Génération PNG + overlay FFmpeg animé
+# ═══════════════════════════════════════════════════════════════════════
+import math as _math
+
+def _gen_sticker_png(stype, text, color_hex, size, out_path):
+    """
+    Génère un sticker PNG RGBA via Pillow.
+    stype : splat | impact | bubble | star | zap | arrow
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        return False
+
+    W = H = size
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d   = ImageDraw.Draw(img)
+    cx, cy = W // 2, H // 2
+
+    # Convertir couleur hex → RGB
+    ch = color_hex.lstrip("#")
+    cr, cg, cb = int(ch[0:2],16), int(ch[2:4],16), int(ch[4:6],16)
+    col_main  = (cr, cg, cb, 230)
+    col_dark  = (max(0,cr-60), max(0,cg-60), max(0,cb-60), 255)
+    col_light = (min(255,cr+80), min(255,cg+80), min(255,cb+80), 180)
+
+    try:
+        font_big = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", max(14, size//5))
+        font_sm  = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", max(11, size//7))
+    except Exception:
+        font_big = font_sm = ImageFont.load_default()
+
+    if stype == "splat":
+        import random as _rnd
+        _rnd.seed(hash(text) % 9999)
+        r = int(W * 0.38)
+        d.ellipse([cx-r, cy-r, cx+r, cy+r], fill=col_main)
+        for angle_deg in range(0, 360, 28):
+            angle = _math.radians(angle_deg + _rnd.randint(-12,12))
+            dist = r + _rnd.randint(int(W*0.08), int(W*0.20))
+            bx = cx + int(dist * _math.cos(angle))
+            by = cy + int(dist * _math.sin(angle))
+            br = _rnd.randint(int(W*0.05), int(W*0.11))
+            d.ellipse([bx-br, by-br, bx+br, by+br], fill=col_main)
+        d.ellipse([cx-r//3, cy-r//2, cx, cy-r//6], fill=col_light)
+        if text:
+            d.text((cx, cy), text[:10], fill=(20,20,20,220), font=font_big, anchor="mm")
+
+    elif stype == "impact":
+        rings = [(230,60,0,200),(255,140,0,160),(255,220,0,120),(255,255,120,80)]
+        for i, rc in enumerate(rings):
+            r = int(W*0.46) - i*int(W*0.09)
+            lw = max(2, int(W*0.025)) - i
+            d.ellipse([cx-r, cy-r, cx+r, cy+r], outline=rc, width=lw)
+        d.ellipse([cx-int(W*0.07), cy-int(W*0.07), cx+int(W*0.07), cy+int(W*0.07)], fill=(255,60,0,240))
+
+    elif stype == "bubble":
+        bx, by = int(W*0.08), int(W*0.08)
+        bw, bh = int(W*0.84), int(H*0.60)
+        d.rounded_rectangle([bx,by,bx+bw,by+bh], radius=int(W*0.09),
+                             fill=(255,255,255,240), outline=(20,20,20,255), width=3)
+        tail = [(bx+int(bw*0.15), by+bh), (bx+int(bw*0.40), by+bh), (bx+int(bw*0.08), by+bh+int(H*0.22))]
+        d.polygon(tail, fill=(255,255,255,240))
+        d.line([tail[0],tail[2]], fill=(20,20,20,255), width=3)
+        d.line([tail[2],tail[1]], fill=(20,20,20,255), width=3)
+        if text:
+            lines = text[:20].split(" ")
+            mid = len(lines)//2 + 1
+            line1 = " ".join(lines[:mid])
+            line2 = " ".join(lines[mid:])
+            d.text((bx+bw//2, by+bh//2 - int(H*0.06)), line1, fill=(200,0,0,255), font=font_big, anchor="mm")
+            if line2:
+                d.text((bx+bw//2, by+bh//2 + int(H*0.08)), line2, fill=(40,40,40,220), font=font_sm, anchor="mm")
+
+    elif stype == "star":
+        pts = []
+        for i in range(16):
+            angle = _math.radians(i * 22.5 - 90)
+            r = int(W*0.46) if i%2==0 else int(W*0.25)
+            pts.append((cx + r*_math.cos(angle), cy + r*_math.sin(angle)))
+        d.polygon(pts, fill=(255,220,0,240))
+        d.polygon(pts, outline=(20,20,20,200), width=2)
+        if text:
+            parts = text.split(" ", 1)
+            d.text((cx, cy-int(H*0.07)), parts[0][:8], fill=(200,0,0,255), font=font_big, anchor="mm")
+            if len(parts)>1:
+                d.text((cx, cy+int(H*0.10)), parts[1][:8], fill=(20,20,20,200), font=font_sm, anchor="mm")
+
+    elif stype == "zap":
+        zap = [
+            (int(W*0.55),int(H*0.04)), (int(W*0.28),int(H*0.50)),
+            (int(W*0.50),int(H*0.50)), (int(W*0.22),int(H*0.96)),
+            (int(W*0.72),int(H*0.44)), (int(W*0.50),int(H*0.44)),
+            (int(W*0.72),int(H*0.04))
+        ]
+        d.polygon(zap, fill=(255,240,0,250))
+        d.polygon(zap, outline=(255,120,0,255), width=2)
+
+    elif stype == "arrow":
+        # Flèche pointant à gauche
+        tip_x = int(W*0.08)
+        shaft_pts = [
+            (int(W*0.92),int(H*0.36)),(int(W*0.92),int(H*0.64)),
+            (int(W*0.45),int(H*0.64)),(int(W*0.45),int(H*0.82)),
+            (tip_x,cy),
+            (int(W*0.45),int(H*0.18)),(int(W*0.45),int(H*0.36))
+        ]
+        d.polygon(shaft_pts, fill=col_main)
+        d.polygon(shaft_pts, outline=col_dark, width=2)
+
+    img.save(out_path)
+    return True
+
+
+def _sticker_overlay_filter(stickers, video_w, video_h):
+    """
+    Construit la filter_complex FFmpeg pour superposer N stickers animés.
+    Utilise fade filter sur chaque sticker (alpha=1) + enable pour le timing.
+    Retourne (input_args, filter_str, nb_inputs_added)
+    """
+    if not stickers:
+        return [], "", 0
+
+    input_args = []
+    filter_parts = []
+    prev_label = "0:v"
+    nb_ok = 0
+
+    for idx, s in enumerate(stickers):
+        img_path = f"_sticker_{idx}.png"
+        stype = s.get("type",    "star")
+        text  = s.get("text",    "")
+        color = s.get("color",   "#FF2200")
+        sz    = s.get("size",    int(video_w * 0.28))  # 28% largeur par défaut
+        x_pct = s.get("x_pct",  0.8)
+        y_pct = s.get("y_pct",  0.3)
+        t0    = s.get("t_start", 0.5)
+        tdur  = s.get("t_dur",   1.2)
+        anim  = s.get("anim",    "pop")
+
+        ok = _gen_sticker_png(stype, text, color, sz, img_path)
+        if not ok:
+            continue
+
+        # Position pixel (coin haut-gauche)
+        px = int(video_w  * x_pct - sz / 2)
+        py = int(video_h * y_pct - sz / 2)
+        px = max(0, min(px, video_w  - sz))
+        py = max(0, min(py, video_h - sz))
+
+        t_end    = t0 + tdur
+        fade_in  = min(0.15, tdur * 0.18)
+        fade_out = min(0.18, tdur * 0.20)
+        hold     = max(0.1, tdur - fade_in - fade_out)
+        enable   = f"between(t,{t0:.3f},{t_end:.3f})"
+
+        # Filtre sur le sticker : scale + fade alpha
+        # Le fade est appliqué en temps local (depuis PTS=0 du sticker)
+        # puis on décale via setpts pour qu'il apparaisse au bon moment
+        px_expr = str(px)
+        if anim == "shake":
+            px_expr = f"{px}+if(between(t,{t0:.3f},{t_end:.3f}),sin(t*50)*5,0)"
+
+        # Shake : on applique un léger crop+pad pour simuler un décalage horizontal
+        # en alternant entre deux versions — simplifié : juste fade sans shake
+        vf_sticker = (
+            f"[{idx+1}:v]"
+            f"scale={sz}:{sz},"
+            f"format=rgba,"
+            f"fade=t=in:st=0:d={fade_in:.3f}:alpha=1,"
+            f"fade=t=out:st={fade_in+hold:.3f}:d={fade_out:.3f}:alpha=1,"
+            f"setpts=PTS+{t0:.3f}/TB"
+            f"[s{idx}]"
+        )
+        # x position fixe (pas d'expression dynamique dans overlay x=)
+        overlay_f = (
+            f"[{prev_label}][s{idx}]"
+            f"overlay=x={px}:y={py}:format=auto:enable='{enable}'"
+            f"[v{idx}]"
+        )
+
+        filter_parts.append(vf_sticker)
+        filter_parts.append(overlay_f)
+        prev_label = f"v{idx}"
+        input_args.extend(["-i", img_path])
+        nb_ok += 1
+
+    if not filter_parts:
+        return [], "", 0
+
+    # Pas de copy final — le dernier label est directement [vout]
+    # Renommer le dernier label en vout
+    last = f"[v{nb_ok-1}]"
+    final_filter = ";".join(filter_parts).replace(last, "[vout]", 1)
+    # Si nb_ok==0 après boucle, ce cas est déjà géré
+    return input_args, final_filter, nb_ok
+
+
+def sticker_analysis(segments, opts, vira_result):
+    """
+    Demande au LLM de placer des stickers intelligents sur la vidéo.
+    Retourne une liste de sticker dicts ou [] si échec.
+    """
+    api_key = os.environ.get("GITHUB_TOKEN", "")
+    if not api_key:
+        print("  [Stickers] GITHUB_TOKEN absent — stickers désactivés")
+        return []
+
+    if not opts.get("stickers", True):
+        print("  [Stickers] Désactivés par config")
+        return []
+
+    W, H = cfg(opts, "resolution").split("x")
+    mode = opts.get("mode", "auto")
+
+    # Résumé des segments pour le LLM
+    segs_lines = []
+    for i, s in enumerate(segments):
+        role = "hook" if i == 0 else ("punch" if i == len(segments)-1 else "core")
+        segs_lines.append(f"  Segment {i+1} : durée={s['dur']:.2f}s  rôle={role}")
+    segs_desc = "\n".join(segs_lines)
+    # Infos viralité si dispo
+    vira_recs = ""
+    if vira_result:
+        recs = vira_result.get("recs", [])
+        vira_recs = "  Analyse viralité : " + " | ".join(r["text"] for r in recs[:3])
+
+    prompt = f"""Tu es un expert TikTok Les Crados (cartes satiriques absurdes style Garbage Pail Kids).
+Place des stickers animés intelligents pour amplifier l'impact de la vidéo.
+
+VIDÉO : {mode.upper()} mode, {W}x{H}, {len(segments)} segments
+{segs_desc}
+{vira_recs}
+
+STICKERS DISPONIBLES :
+  splat   — tache de slime verte qui éclabousse (action physique, moment gore)
+  impact  — ondes de choc concentriques orange/rouge (coup, choc, révélation)
+  bubble  — bulle de dialogue blanche avec texte (réplique choc, commentaire)
+  star    — étoile jaune BD avec texte (exclamation, moment WOW)
+  zap     — éclair jaune (énergie, surprise, transition)
+  arrow   — flèche rouge (attirer l'attention sur un détail)
+
+RÈGLES :
+  - Maximum 3 stickers au total
+  - Chaque sticker dans une zone différente de l'écran
+  - t_start = moment précis où le sticker doit apparaître (en secondes depuis le début)
+  - x_pct/y_pct = position centre sticker (0.0=gauche/haut, 1.0=droite/bas)
+  - Éviter le centre (texte/action principale), préférer les bords
+  - sticker "bubble" uniquement avec un texte court percutant en français (max 15 chars)
+  - sticker "star" uniquement avec un mot choc (max 8 chars)
+  - Les autres types : text = "" (vide)
+  - t_dur entre 0.8 et 1.8s
+  - anim : "pop" pour apparition, "shake" pour vibration, "fade" pour discret
+
+Réponds UNIQUEMENT en JSON valide :
+{{
+  "stickers": [
+    {{
+      "type": "<splat|impact|bubble|star|zap|arrow>",
+      "text": "<texte ou vide>",
+      "color": "<hex couleur principale>",
+      "size_pct": <0.15 à 0.30 fraction de la largeur vidéo>,
+      "x_pct": <0.0 à 1.0>,
+      "y_pct": <0.0 à 1.0>,
+      "t_start": <float secondes>,
+      "t_dur": <float secondes>,
+      "anim": "<pop|shake|fade>"
+    }}
+  ]
+}}"""
+
+    print("  [Stickers] Analyse IA en cours…")
+    try:
+        raw = _call_github_models(api_key, prompt)
+        data = _extract_json(raw)
+        stickers_raw = data.get("stickers", [])
+    except Exception as e:
+        print(f"  [Stickers] Erreur API : {e}")
+        return []
+
+    # Résoudre size_pct → pixels
+    W_px = int(W)
+    stickers = []
+    for s in stickers_raw[:3]:
+        sz = max(80, min(300, int(W_px * s.get("size_pct", 0.22))))
+        stickers.append({
+            "type":    s.get("type",    "star"),
+            "text":    s.get("text",    ""),
+            "color":   s.get("color",   "#FF2200"),
+            "size":    sz,
+            "x_pct":   float(s.get("x_pct",   0.8)),
+            "y_pct":   float(s.get("y_pct",   0.3)),
+            "t_start": float(s.get("t_start", 1.0)),
+            "t_dur":   float(s.get("t_dur",   1.2)),
+            "anim":    s.get("anim",    "pop"),
+        })
+        print(f"    Sticker {s.get('type')} '{s.get('text','')}' "
+              f"@ t={s.get('t_start'):.1f}s  "
+              f"pos=({s.get('x_pct'):.2f},{s.get('y_pct'):.2f})")
+
+    return stickers
+
+
+def apply_stickers(input_video, output_video, stickers, opts):
+    """
+    Applique les stickers animés sur la vidéo via FFmpeg overlay.
+    """
+    if not stickers:
+        run(f'cp "{input_video}" "{output_video}"')
+        return
+
+    W_str, H_str = cfg(opts, "resolution").split("x")
+    W_px = int(W_str)
+    H_px = int(H_str)
+    crf  = cfg(opts, "crf")
+
+    input_args, filter_str, nb = _sticker_overlay_filter(stickers, W_px, H_px)
+
+    if not filter_str:
+        run(f'cp "{input_video}" "{output_video}"')
+        return
+
+    inputs = f'"{input_video}"' + " " + " ".join(f'"{a}"' if not a.startswith("-") else a for a in input_args)
+    # Reconstruire proprement
+    cmd_parts = [f'ffmpeg -y -i "{input_video}"']
+    for a in input_args:
+        cmd_parts.append(a)
+
+    cmd = (
+        "ffmpeg -y"
+        + f' -i "{input_video}"'
+        + " " + " ".join(input_args)
+        + f' -filter_complex "{filter_str}"'
+        + f' -map "[vout]" -map "0:a" -c:v libx264 -crf {crf} -c:a copy "{output_video}"'
+    )
+    try:
+        run(cmd)
+        print(f"  [Stickers] {nb} sticker(s) appliqué(s) ✅")
+    except Exception as e:
+        print(f"  [Stickers] Erreur FFmpeg : {e} — fallback sans stickers")
+        run(f'cp "{input_video}" "{output_video}"')
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════════
@@ -864,6 +1209,15 @@ def start():
 
     print("\n  [Overlay cinema + Logo splash]")
     build_cinema_overlay_no_text(opts)
+
+    # ── Stickers intelligents ───────────────────────────────────────
+    print("\n  [Stickers IA]")
+    stickers = sticker_analysis(segments, opts, vira_result)
+    if stickers:
+        run('mv output.mp4 _presticker.mp4')
+        apply_stickers("_presticker.mp4", "output.mp4", stickers, opts)
+    else:
+        print("  [Stickers] Aucun sticker appliqué")
 
     size = os.path.getsize("output.mp4") / 1024 / 1024
     print(f"\n{'='*60}")
