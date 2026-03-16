@@ -733,54 +733,45 @@ def start():
         print(f"  Clip {i} : {d:.2f}s  audio={has_audio(p)}")
         raw_paths.append(p)
 
-    # ── Appliquer l'ordre optimal recommandé par l'analyse viralité ──
+    # ── Ordre des clips ────────────────────────────────────────────
+    # PRIORITÉ : clip_order de p.json (UI) > pa.json > séquentiel
+    # Le pa.json est IGNORÉ pour l'ordre : il peut être stale (session précédente)
+    # L'ordre viralité sera appliqué par l'analyse inline ci-dessous
     clip_order = opts.get("clip_order")
-    if not clip_order:
-        # Chercher dans pa.json si disponible
-        if os.path.exists("pa.json"):
-            try:
-                with open("pa.json") as _f:
-                    _pa = json.load(_f)
-                rc = _pa.get("options", {}).get("recommended_config", {})
-                clip_order = rc.get("clip_order")
-            except Exception:
-                pass
     if clip_order and isinstance(clip_order, list) and len(clip_order) == len(raw_paths):
-        # Valider les indices
         if sorted(clip_order) == list(range(len(raw_paths))):
-            raw_paths  = [raw_paths[i]  for i in clip_order]
-            clips_raw  = [clips_raw[i]  for i in clip_order]
-            print(f"  Ordre viralité appliqué : {clip_order}")
+            raw_paths = [raw_paths[i] for i in clip_order]
+            clips_raw = [clips_raw[i] for i in clip_order]
+            print(f"  Ordre UI appliqué : {clip_order}")
         else:
-            print(f"  Ordre viralité ignoré (indices invalides) : {clip_order}")
+            print(f"  Ordre UI ignoré (indices invalides) : {clip_order}")
     else:
-        print(f"  Ordre clips : séquentiel (pas de recommandation viralité)")
+        print(f"  Ordre clips : séquentiel")
 
     n        = len(raw_paths)
-    # Durée cible selon le mode : PUNCH = hook+core+punch, CINEMA = cinema_dur UI (cap 60s TikTok)
+    # Durée initiale selon le mode UI (sera potentiellement affinée par la viralité)
     mode_eff = opts.get("mode", "auto").lower()
     if mode_eff == "punch":
-        target = (opts.get("hook_dur", 2.0) + opts.get("core_dur", 2.5) + opts.get("punch_dur", 3.0))
-        target = min(target, 15)  # PUNCH : 15s max
-        # Plancher : au moins 2s par clip pour ne pas couper trop court
-        target = max(target, n * 2.0)
+        target = max(
+            opts.get("hook_dur", 2.0) + opts.get("core_dur", 2.5) + opts.get("punch_dur", 3.0),
+            n * 2.0   # plancher 2s/clip
+        )
+        target = min(target, 15)
     else:
-        target = min(cfg(opts, "cinema_dur"), 60)  # CINEMA/AUTO : cap TikTok 60s
-        # Plancher : au moins 3s par clip
-        target = max(target, n * 3.0)
-    xf_b     = 0.2   # HARDCODE — ignore p.json (évite glitch xfade)
+        target = max(min(cfg(opts, "cinema_dur"), 60), n * 3.0)
+    xf_b = 0.2
     clip_dur = max((target - xf_b * (n - 1)) / n, MIN_CLIP_DUR)
     print(f"\n  Mode effectif       : {mode_eff.upper()}")
     print(f"  Duree cible total   : {target:.2f}s")
 
-    # ── Analyse viralité avant rendu ───────────────────────────────
+    # ── Analyse viralité (avant rendu, après sanitisation) ─────────
     vira_result = viralite_analysis(clips_raw, opts, raw_paths)
 
-    # ── Appliquer les recommandations de l'analyse inline ──────────
+    # ── Appliquer les recommandations viralité ─────────────────────
     if vira_result:
         rc = vira_result.get("recommended_config", {})
 
-        # 1. Ordre des clips (seulement si pas déjà fourni par pa.json)
+        # 1. Ordre des clips (viralité inline — seulement si pas fourni par UI)
         if not opts.get("clip_order"):
             inline_order = rc.get("clip_order")
             if (inline_order and isinstance(inline_order, list)
@@ -788,47 +779,64 @@ def start():
                     and sorted(inline_order) == list(range(len(raw_paths)))):
                 raw_paths = [raw_paths[i] for i in inline_order]
                 clips_raw = [clips_raw[i] for i in inline_order]
-                print(f"  Ordre viralité inline appliqué : {inline_order}")
+                print(f"  Ordre viralité inline : {inline_order}")
 
-        # 2. Mode recommandé (punch / cinema / auto)
+        # 2. Mode recommandé
         rec_mode = rc.get("mode", "").lower()
-        if rec_mode in ("punch", "cinema", "auto") and rec_mode != opts.get("mode", "auto"):
-            print(f"  Mode viralité : {opts.get('mode','auto').upper()} → {rec_mode.upper()}")
+        if rec_mode in ("punch", "cinema", "auto") and rec_mode != mode_eff:
+            print(f"  Mode viralité : {mode_eff.upper()} → {rec_mode.upper()}")
             opts["mode"] = rec_mode
+            mode_eff = rec_mode
 
-        # 3. Durée totale cible depuis durées recommandées
-        if rc.get("mode", "").lower() == "punch":
-            rec_total = (rc.get("hook_dur",  opts.get("hook_dur",  2.0)) +
-                         rc.get("core_dur",  opts.get("core_dur",  2.5)) +
-                         rc.get("punch_dur", opts.get("punch_dur", 3.0)))
-            opts["cinema_dur"] = round(min(rec_total, 15), 2)
-            print(f"  Durée cible viralité (punch) : {opts['cinema_dur']}s")
-            target   = min(opts["cinema_dur"], 15)
+        # 3. Durées recommandées — NE PAS descendre sous les valeurs UI
+        #    La viralité peut suggérer des durées très courtes (ex: hook=1.5s)
+        #    mais les clips Grok/AI durent 6s → respecter au moins src_dur/n
+        src_avg = sum(duration(p) for p in raw_paths) / len(raw_paths)
+        min_seg = max(src_avg * 0.5, 2.0)  # au moins 50% du clip ou 2s
+        if mode_eff == "punch":
+            # Prendre le MAX entre suggestion viralité et plancher raisonnable
+            # Planchers absolus indépendants de la suggestion viralité
+            vhook  = max(rc.get("hook_dur",  opts.get("hook_dur",  2.0)), 2.0)
+            vpunch = max(rc.get("punch_dur", opts.get("punch_dur", 3.0)), 3.0)
+            vcore  = max(rc.get("core_dur",  opts.get("core_dur",  2.5)), 2.0)
+            opts["hook_dur"]  = round(vhook,  2)
+            opts["punch_dur"] = round(vpunch, 2)
+            opts["core_dur"]  = round(vcore,  2)
+            rec_total = vhook + vcore + vpunch
+            target = min(max(rec_total, n * min_seg), 15)
             clip_dur = max((target - xf_b * (n - 1)) / n, MIN_CLIP_DUR)
-            print(f"  Durée segment recalculée (punch) : {clip_dur:.2f}s")
+            print(f"  Durées viralité ajustées → hook={vhook:.1f}s core={vcore:.1f}s punch={vpunch:.1f}s")
+            print(f"  Durée cible finale : {target:.2f}s  clip_dur moy : {clip_dur:.2f}s")
         else:
-            # cinema / auto : respecter cinema_dur de l'UI
-            target   = min(opts.get("cinema_dur", cfg(opts, "cinema_dur")), 60)
+            target = min(max(opts.get("cinema_dur", cfg(opts, "cinema_dur")), n * 3.0), 60)
             clip_dur = max((target - xf_b * (n - 1)) / n, MIN_CLIP_DUR)
-            print(f"  Durée segment recalculée (cinema/auto) : {clip_dur:.2f}s")
+            print(f"  Durée segment (cinema/auto) : {clip_dur:.2f}s")
 
-    # ── Durées par segment : PUNCH = proportionnel hook/core/punch ──
+    # ── Durées par segment ──────────────────────────────────────────
+    # Plancher basé sur la durée réelle des sources (évite de couper les animations)
+    src_durs = [duration(p) for p in raw_paths]
+    src_avg  = sum(src_durs) / len(src_durs)
+    # Plancher = 40% de la durée source ou 2s, selon le plus grand
+    seg_floor = max(src_avg * 0.40, 2.0)
+
     mode_final = opts.get("mode", "auto").lower()
     if mode_final == "punch" and n >= 2:
-        hook_d  = float(opts.get("hook_dur",  2.0))
-        core_d  = float(opts.get("core_dur",  2.5))
-        punch_d = float(opts.get("punch_dur", 3.0))
+        # Planchers absolus : hook≥2s, core≥2s, punch≥3s (quelque soit la valeur UI/viralité)
+        hook_d  = max(float(opts.get("hook_dur",  2.0)), 2.0)
+        core_d  = max(float(opts.get("core_dur",  2.5)), 2.0)
+        punch_d = max(float(opts.get("punch_dur", 3.0)), 3.0)
         if n == 2:
             seg_durs = [hook_d, punch_d]
         elif n == 3:
             seg_durs = [hook_d, core_d, punch_d]
         else:
-            # n > 3 : hook + (n-2) cores + punch
             seg_durs = [hook_d] + [core_d] * (n - 2) + [punch_d]
-        print(f"  Durées PUNCH par segment : {[round(d,2) for d in seg_durs]}")
+        print(f"  Plancher seg    : {seg_floor:.2f}s  (src moy {src_avg:.2f}s)")
+        print(f"  Durées PUNCH    : {[round(d,2) for d in seg_durs]}")
     else:
-        seg_durs = [clip_dur] * n
-        print(f"  Durée/segment : {clip_dur:.2f}s  |  xfade base : {xf_b}s\n")
+        seg_durs = [max(clip_dur, seg_floor)] * n
+        print(f"  Durée/segment   : {seg_durs[0]:.2f}s  (plancher {seg_floor:.2f}s)\n")
+
 
     # Rendu des segments
     segments = []
