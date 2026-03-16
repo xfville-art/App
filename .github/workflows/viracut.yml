@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4.2.2   # Node 24 natif — supprime l'avertissement
+        uses: actions/checkout@v4.2.2
 
       - name: Install Tools
         run: |
@@ -27,7 +27,7 @@ jobs:
 
       - name: Sauvegarde Video
         if: always()
-        uses: actions/upload-artifact@v4.6.0   # Node 24 natif — supprime l'avertissement
+        uses: actions/upload-artifact@v4.6.0
         with:
-          name: MaVideo
+          name: viracut-output
           path: output.mp4
