@@ -18,6 +18,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg fonts-liberation
+          pip3 install Pillow --break-system-packages -q
 
       - name: Execution Python
         env:
