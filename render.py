@@ -1048,6 +1048,20 @@ def apply_stickers(input_video, output_video, stickers, opts):
     H_px = int(H_str)
     crf  = cfg(opts, "crf")
 
+    # Valider les stickers : cap t_start à la durée de la vidéo - 1s
+    try:
+        vid_dur = duration(input_video)
+        stickers = [s for s in stickers
+                    if s.get("t_start", 0) < vid_dur - 0.5]
+        for s in stickers:
+            s["t_start"] = max(0.1, min(s["t_start"], vid_dur - 1.0))
+        if not stickers:
+            print("  [Stickers] Tous les stickers hors durée — ignorés")
+            run(f'cp "{input_video}" "{output_video}"')
+            return
+    except Exception:
+        pass  # si durée non lisible, on continue quand même
+
     input_args, filter_str, nb = _sticker_overlay_filter(stickers, W_px, H_px)
 
     if not filter_str:
@@ -1065,13 +1079,15 @@ def apply_stickers(input_video, output_video, stickers, opts):
         + f' -i "{input_video}"'
         + " " + " ".join(input_args)
         + f' -filter_complex "{filter_str}"'
-        + f' -map "[vout]" -map "0:a" -c:v libx264 -crf {crf} -c:a copy "{output_video}"'
+        + f' -map "[vout]" -map "0:a:0" -c:v libx264 -crf {crf} -c:a copy "{output_video}"'
     )
     try:
         run(cmd)
         print(f"  [Stickers] {nb} sticker(s) appliqué(s) ✅")
     except Exception as e:
-        print(f"  [Stickers] Erreur FFmpeg : {e} — fallback sans stickers")
+        print(f"  [Stickers] ERREUR DÉTAILLÉE : {e}")
+        print(f"  [Stickers] CMD était : {cmd[:300]}")
+        print(f"  [Stickers] Fallback cp — output sans stickers")
         run(f'cp "{input_video}" "{output_video}"')
 
 
