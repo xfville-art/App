@@ -570,12 +570,29 @@ def viralite_analysis(clips_raw, opts, raw_paths):
         for c in clips_meta
     )
 
+    # Durées réelles des sources pour guider le LLM
+    src_dur_info = "\n".join(
+        f"  Clip {c['index']} — {c['dur_s']}s dispo  (utilisation max recommandée)"
+        for c in clips_meta
+    )
+    src_avg_dur = sum(c['dur_s'] for c in clips_meta) / len(clips_meta) if clips_meta else 6.0
+    # Durées min/max suggérées basées sur la durée source
+    hook_min = max(2.0, round(src_avg_dur * 0.30, 1))
+    hook_max = round(src_avg_dur * 0.60, 1)
+    punch_min = max(3.0, round(src_avg_dur * 0.45, 1))
+    punch_max = round(src_avg_dur * 0.85, 1)
+
     prompt = f"""Tu es un expert TikTok spécialisé dans Les Crados (cartes satiriques absurdes style Garbage Pail Kids, public français, format 9:16).
 
 Analyse ces clips et optimise la config pour maximiser la rétention TikTok.
 
 CLIPS ({n_clips}) :
 {clips_desc}
+
+DURÉES SOURCES DISPONIBLES :
+{src_dur_info}
+⚠ IMPORTANT : hook_dur et punch_dur DOIVENT être dans les plages indiquées ci-dessous.
+  Ne pas suggérer des durées plus courtes que les minimums — les clips AI ont besoin de temps pour s'exprimer.
 
 CONFIG ACTUELLE :
 - Mode : {mode.upper()}
@@ -588,8 +605,9 @@ CONFIG ACTUELLE :
 - Résolution : {opts.get('resolution', '720x1280')}
 
 RÈGLES Les Crados TikTok :
-- Durée idéale : 7-9s pour PUNCH, 20-26s pour CINÉMA
-- Hook doit accrocher en 1.5-2s max (image choc, texte percutant)
+- Durée idéale finale : 7-12s pour PUNCH (logo 2.5s inclus), 20-26s pour CINÉMA
+- hook_dur : entre {hook_min}s et {hook_max}s (pas moins de {hook_min}s)
+- punch_dur : entre {punch_min}s et {punch_max}s (pas moins de {punch_min}s)
 - Le clip le plus visuellement fort = hook
 - Punchline = dernier clip, doit être absurde/choquant
 - Loop parfait = fin qui rappelle le début
@@ -613,13 +631,12 @@ Réponds UNIQUEMENT en JSON valide, zéro texte avant ou après :
   ],
   "recommended_config": {{
     "mode": "<auto|punch|cinema>",
-    "hook_dur": <float>,
+    "hook_dur": <float entre {hook_min} et {hook_max}>,
     "core_dur": <float>,
-    "punch_dur": <float>,
+    "punch_dur": <float entre {punch_min} et {punch_max}>,
     "flash_cut": <bool>,
     "zoom_punch": <bool>,
-    "ai_text": <bool>,
-    "clip_order": [<indices 0-based dans le meilleur ordre hook→core→punch>]
+    "ai_text": <bool>
   }}
 }}"""
 
@@ -761,7 +778,7 @@ def start():
     if vira_result:
         rc = vira_result.get("recommended_config", {})
 
-        # NB: clip_order ignoré ici — l'ordre est défini côté app dans clips[]
+        # NB: clip_order ignoré — l'ordre est défini côté app dans clips[]
 
         # 1. Mode recommandé
         rec_mode = rc.get("mode", "").lower()
@@ -770,25 +787,22 @@ def start():
             opts["mode"] = rec_mode
             mode_eff = rec_mode
 
-        # 3. Durées recommandées — NE PAS descendre sous les valeurs UI
-        #    La viralité peut suggérer des durées très courtes (ex: hook=1.5s)
-        #    mais les clips Grok/AI durent 6s → respecter au moins src_dur/n
+        # 2. Durées — le prompt impose déjà des plages min/max basées sur src_dur
+        #    On applique avec planchers durs en dernier filet de sécurité
         src_avg = sum(duration(p) for p in raw_paths) / len(raw_paths)
-        min_seg = max(src_avg * 0.5, 2.0)  # au moins 50% du clip ou 2s
+        floor_hook  = max(2.0, round(src_avg * 0.30, 1))
+        floor_punch = max(3.0, round(src_avg * 0.45, 1))
         if mode_eff == "punch":
-            # Prendre le MAX entre suggestion viralité et plancher raisonnable
-            # Planchers absolus indépendants de la suggestion viralité
-            vhook  = max(rc.get("hook_dur",  opts.get("hook_dur",  2.0)), 2.0)
-            vpunch = max(rc.get("punch_dur", opts.get("punch_dur", 3.0)), 3.0)
-            vcore  = max(rc.get("core_dur",  opts.get("core_dur",  2.5)), 2.0)
+            vhook  = max(float(rc.get("hook_dur",  opts.get("hook_dur",  2.0))), floor_hook)
+            vpunch = max(float(rc.get("punch_dur", opts.get("punch_dur", 3.0))), floor_punch)
+            vcore  = max(float(rc.get("core_dur",  opts.get("core_dur",  2.5))), 2.0)
             opts["hook_dur"]  = round(vhook,  2)
             opts["punch_dur"] = round(vpunch, 2)
             opts["core_dur"]  = round(vcore,  2)
             rec_total = vhook + vcore + vpunch
-            target = min(max(rec_total, n * min_seg), 15)
+            target = min(max(rec_total, n * floor_hook), 15)
             clip_dur = max((target - xf_b * (n - 1)) / n, MIN_CLIP_DUR)
-            print(f"  Durées viralité ajustées → hook={vhook:.1f}s core={vcore:.1f}s punch={vpunch:.1f}s")
-            print(f"  Durée cible finale : {target:.2f}s  clip_dur moy : {clip_dur:.2f}s")
+            print(f"  Durées viralité → hook={vhook:.1f}s core={vcore:.1f}s punch={vpunch:.1f}s  total={rec_total:.1f}s")
         else:
             target = min(max(opts.get("cinema_dur", cfg(opts, "cinema_dur")), n * 3.0), 60)
             clip_dur = max((target - xf_b * (n - 1)) / n, MIN_CLIP_DUR)
