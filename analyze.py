@@ -187,7 +187,7 @@ Réponds UNIQUEMENT en JSON valide, zéro texte avant ou après :
 }}"""
 
     # ── Appel API ────────────────────────────────────────────────────
-    print("\n  Appel Claude API…")
+    print("\n  Appel GitHub Models…")
     try:
         raw = call_llm(api_key, prompt)
         result = extract_json(raw)

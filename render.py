@@ -313,7 +313,7 @@ def append_logo(premain, opts):
         f.write(f"file '{premain}'\nfile '_logo.mp4'\n")
     run(
         f'ffmpeg -y -f concat -safe 0 -i _concat_logo.txt '
-        f'-c:v libx264 -pix_fmt yuv420p -crf {cfg(opts, "crf")} output.mp4'
+        f'-c:v libx264 -pix_fmt yuv420p -crf {cfg(opts, "crf")} -c:a aac -ar 44100 -ac 2 output.mp4'
     )
 
 
@@ -1008,7 +1008,7 @@ def sticker_analysis(segments, opts, vira_result):
             "x_pct":   float(s.get("x_pct",  0.82)),
             "y_pct":   float(s.get("y_pct",  0.25)),
             "t_start": t0,
-            "t_dur":   min(float(s.get("t_dur", 1.3)), content_dur - t0),
+            "t_dur":   max(0.5, min(float(s.get("t_dur", 1.3)), content_dur - t0)),
             "anim":    "pop",
         })
         print(f"    🎯 {stickers[-1]['type']:8s} @ {t0:.1f}s  pos=({stickers[-1]['x_pct']:.2f},{stickers[-1]['y_pct']:.2f})")
@@ -1068,18 +1068,12 @@ def apply_stickers(input_video, output_video, stickers, opts):
         run(f'cp "{input_video}" "{output_video}"')
         return
 
-    inputs = f'"{input_video}"' + " " + " ".join(f'"{a}"' if not a.startswith("-") else a for a in input_args)
-    # Reconstruire proprement
-    cmd_parts = [f'ffmpeg -y -i "{input_video}"']
-    for a in input_args:
-        cmd_parts.append(a)
-
     cmd = (
         "ffmpeg -y"
         + f' -i "{input_video}"'
         + " " + " ".join(input_args)
         + f' -filter_complex "{filter_str}"'
-        + f' -map "[vout]" -map "0:a:0" -c:v libx264 -crf {crf} -pix_fmt yuv420p -c:a copy "{output_video}"'
+        + f' -map "[vout]" -map "0:a:0" -c:v libx264 -crf {crf} -pix_fmt yuv420p -c:a aac -ar 44100 "{output_video}"'
     )
     try:
         run(cmd)
