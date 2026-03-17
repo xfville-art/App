@@ -819,7 +819,7 @@ input[type=password]::placeholder{color:var(--t3)}
           <div><label class="lbl">Branche</label><input type="text" id="branchEdit" value="main" style="width:100%;background:transparent;border:none;outline:none;font-family:var(--fn);font-size:15px;color:var(--t1);font-weight:500"></div>
           <div><label class="lbl">Workflow</label><input type="text" id="wfEdit" value="viracut.yml" style="width:100%;background:transparent;border:none;outline:none;font-family:var(--fn);font-size:15px;color:var(--t1);font-weight:500"></div>
         </div>
-        <div style="padding:12px 16px"><button class="btn btn-sec" onclick="saveConfig()">Enregistrer</button></div>
+        <div style="padding:12px 16px"><button class="btn btn-sec" onclick="saveConfig(event)">Enregistrer</button></div>
       </div>
     </div>
 
@@ -1030,7 +1030,7 @@ function updateChips(){
 /* ══ STATS ══ */
 async function loadStats(){
   try{
-    const res=await fetch(`https://api.github.com/repos/${repo}/actions/runs?per_page=10`,{headers:{'Authorization':`Bearer ${token}`}}).then(r=>r.json());
+    const res=await fetch(`https://api.github.com/repos/${repo}/actions/workflows/${wfFile}/runs?per_page=10`,{headers:{'Authorization':`Bearer ${token}`}}).then(r=>r.json());
     const runs=res.workflow_runs||[];
     const fails=runs.filter(r=>r.conclusion==='failure').length;
     const lastOk=runs.find(r=>r.conclusion==='success');
@@ -1195,12 +1195,15 @@ async function process(){
   }
   updateUI(22,'Upload','Envoi vers GitHub…',0,'↑');
   try{
-    const get=await fetch(`https://api.github.com/repos/${repo}/contents/p.json`,{headers:{'Authorization':`Bearer ${token}`}}).then(r=>r.json());
-    await fetch(`https://api.github.com/repos/${repo}/contents/p.json`,{
+    let sha='';
+    const getRes=await fetch(`https://api.github.com/repos/${repo}/contents/p.json`,{headers:{'Authorization':`Bearer ${token}`}});
+    if(getRes.ok){const getJson=await getRes.json();sha=getJson.sha||'';}
+    const putRes=await fetch(`https://api.github.com/repos/${repo}/contents/p.json`,{
       method:'PUT',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},
-      body:JSON.stringify({message:'vid',content:btoa(unescape(encodeURIComponent(JSON.stringify({videos:vids,options:getConfig()})))),sha:get.sha})
+      body:JSON.stringify({message:'vid',content:btoa(unescape(encodeURIComponent(JSON.stringify({videos:vids,options:getConfig()})))),...(sha?{sha}:{})})
     });
-  }catch(e){updateUI(0,'Erreur upload','Impossible de pousser p.json',0,'✗');stopTimer();return;}
+    if(!putRes.ok){const err=await putRes.json().catch(()=>({}));updateUI(0,'Erreur upload','Erreur '+putRes.status+' : '+(err.message||'vérifier droits token'),0,'✗');stopTimer();return;}
+  }catch(e){updateUI(0,'Erreur upload','Impossible de pousser p.json : '+e.message,0,'✗');stopTimer();return;}
   updateUI(36,'Démarrage','GitHub Actions en initialisation…',1,'…');
   try{
     await fetch(`https://api.github.com/repos/${repo}/actions/workflows/${wfFile}/dispatches`,{
@@ -1229,7 +1232,7 @@ async function monitor(){
   try{
     const res=await fetch(`https://api.github.com/repos/${repo}/actions/runs?per_page=5`,{headers:{'Authorization':`Bearer ${token}`}}).then(r=>r.json());
     const runs=res.workflow_runs||[];
-    const run=dispatchTime?runs.find(r=>new Date(r.created_at)>=new Date(dispatchTime)-30000):runs[0];
+    const run=dispatchTime?runs.find(r=>new Date(r.created_at)>=new Date(dispatchTime)-30000&&!(r.name||'').toLowerCase().includes('analyz')):runs.find(r=>!(r.name||'').toLowerCase().includes('analyz'));
     if(!run){setTimeout(monitor,5000);return;}
     const ll=document.getElementById('logsLink');ll.style.display='block';ll.href=run.html_url;
     const s=Math.floor((Date.now()-startTime)/1000);
@@ -1336,11 +1339,12 @@ async function deleteAllRuns(){
   _cachedRuns=[];document.getElementById('histList').innerHTML='<div class="no-data">Historique supprimé</div>';
   document.getElementById('td3').classList.remove('show');loadStats();
 }
-function saveConfig(){
+function saveConfig(e){
   repo=document.getElementById('repoEdit').value.trim()||repo;
   branch=document.getElementById('branchEdit').value.trim()||'main';
   wfFile=document.getElementById('wfEdit').value.trim()||'viracut.yml';
-  const btn=event.target,prev=btn.textContent;
+  localStorage.setItem('vc_repo',repo);
+  const btn=e.target,prev=btn.textContent;
   btn.textContent='ENREGISTRÉ ✓';setTimeout(()=>btn.textContent=prev,2000);
 }
 
@@ -1407,8 +1411,8 @@ async function monitorViraAnalysis(btn,attempt){
   try{
     const res=await fetch(`https://api.github.com/repos/${repo}/actions/runs?per_page=10`,{headers:{'Authorization':`Bearer ${token}`}}).then(r=>r.json());
     const runs=res.workflow_runs||[];
-    const cutoff=new Date(viraAnalysisDispatchTime)-90000;
-    const run=runs.find(r=>r.name&&(r.name.toLowerCase().includes('analyz')||r.name.toLowerCase().includes('viracut'))&&new Date(r.created_at)>=cutoff)||runs.find(r=>new Date(r.created_at)>=cutoff);
+    const cutoff=new Date(viraAnalysisDispatchTime)-180000;
+    const run=runs.find(r=>r.name&&r.name.toLowerCase().includes('analyz')&&new Date(r.created_at)>=cutoff)||runs.find(r=>new Date(r.created_at)>=cutoff&&r.name&&!r.name.toUpperCase().includes('VIRACUT\u0020'));
     if(!run){setTimeout(()=>monitorViraAnalysis(btn,attempt+1),5000);return;}
     if(run.status!=='completed'){const elapsed=Math.floor((Date.now()-new Date(viraAnalysisDispatchTime))/1000);document.getElementById('viraSubtitle').textContent=`Analyse IA en cours… ${elapsed}s`;setTimeout(()=>monitorViraAnalysis(btn,attempt+1),5000);return;}
     if(run.conclusion!=='success'){showViraError('Workflow échoué — voir logs GitHub Actions');resetAnalyzeBtn(btn);return;}
@@ -1433,9 +1437,9 @@ async function monitorViraAnalysis(btn,attempt){
 function applyRecommendedConfig(data){
   const rc=data.recommended_config;if(!rc)return;
   if(rc.mode)setMode(rc.mode);
-  if(rc.hook_dur!==undefined){const el=document.getElementById('rHook');if(rc.hook_dur>parseFloat(el.value)){el.value=rc.hook_dur;rng(el,'vHook');}}
-  if(rc.core_dur!==undefined){const el=document.getElementById('rCore');if(rc.core_dur>parseFloat(el.value)){el.value=rc.core_dur;rng(el,'vCore');}}
-  if(rc.punch_dur!==undefined){const el=document.getElementById('rPunch');if(rc.punch_dur>parseFloat(el.value)){el.value=rc.punch_dur;rng(el,'vPunch');}}
+  if(rc.hook_dur!==undefined){const el=document.getElementById('rHook');el.value=Math.min(Math.max(rc.hook_dur,parseFloat(el.min)),parseFloat(el.max));rng(el,'vHook');}
+  if(rc.core_dur!==undefined){const el=document.getElementById('rCore');el.value=Math.min(Math.max(rc.core_dur,parseFloat(el.min)),parseFloat(el.max));rng(el,'vCore');}
+  if(rc.punch_dur!==undefined){const el=document.getElementById('rPunch');el.value=Math.min(Math.max(rc.punch_dur,parseFloat(el.min)),parseFloat(el.max));rng(el,'vPunch');}
   if(rc.flash_cut!==undefined)document.getElementById('oFlash').checked=rc.flash_cut;
   if(rc.zoom_punch!==undefined)document.getElementById('oZoom').checked=rc.zoom_punch;
   if(rc.ai_text!==undefined)document.getElementById('oText').checked=rc.ai_text;
