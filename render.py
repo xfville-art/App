@@ -778,351 +778,269 @@ Réponds UNIQUEMENT en JSON valide, zéro texte avant ou après :
     return result
 
 
-
 # ═══════════════════════════════════════════════════════════════════════
-# STICKER ENGINE  (v2) — Style BD / Garbage Pail Kids
-# Canvas 100% transparent — zéro fond carré — formes explosives
+# STICKER ENGINE  (v3) — Bulles de dialogue BD
+# Une seule forme : bulle ronde + queue pointue vers le personnage
+# Texte contextuel lié à l'action — style Les Crados / Garbage Pail Kids
 # ═══════════════════════════════════════════════════════════════════════
 import math as _math
 
-def _bd_stroke_text(draw, text, font, x, y, fill, stroke_col, sw=6, anchor="mm"):
-    """Texte avec contour épais BD — 8 directions + diagonales."""
-    offsets = [(-sw,0),(sw,0),(0,-sw),(0,sw),
-               (-sw,-sw),(sw,-sw),(-sw,sw),(sw,sw),
-               (-sw//2,-sw),(sw//2,-sw),(-sw//2,sw),(sw//2,sw)]
-    for dx, dy in offsets:
+def _bd_stroke_text(draw, text, font, x, y, fill, stroke_col, sw=5, anchor="mm"):
+    """Texte avec contour épais BD — 8 directions."""
+    for dx, dy in [(-sw,0),(sw,0),(0,-sw),(0,sw),(-sw,-sw),(sw,-sw),(-sw,sw),(sw,sw)]:
         draw.text((x+dx, y+dy), text, fill=stroke_col, font=font, anchor=anchor)
     draw.text((x, y), text, fill=fill, font=font, anchor=anchor)
 
-def _spiky_polygon(cx, cy, n_spikes, r_outer, r_inner, angle_offset=0, jitter=0, rnd=None):
-    """Génère un polygone en étoile irrégulière (spiky) — style explosion BD."""
-    pts = []
-    for i in range(n_spikes * 2):
-        angle = _math.radians(i * 180 / n_spikes + angle_offset)
-        r = r_outer if i % 2 == 0 else r_inner
-        if jitter and rnd:
-            r += rnd.randint(-jitter, jitter)
-        pts.append((cx + r * _math.cos(angle), cy + r * _math.sin(angle)))
-    return pts
 
-def _gen_sticker_png(stype, text, color_hex, size, out_path):
+def _gen_speech_bubble(text, size, out_path, tail_side="right", style="normal"):
     """
-    Génère un sticker PNG RGBA 100% transparent — style BD Garbage Pail Kids.
-    Aucun fond carré ou rectangulaire. Formes explosives avec contours noirs épais.
+    Génère une bulle de dialogue BD authentique.
+
+    tail_side : "right" | "left" | "bottom-right" | "bottom-left"
+                Indique de quel côté sort la queue (vers le personnage)
+    style     : "normal"  → bulle blanche classique
+                "shout"   → bulle jaune avec contour épais (cri)
+                "thought" → bulle nuage (pensée)
+                "shock"   → bulle dentelée (choc/surprise)
+
+    La bulle occupe tout le canvas, queue comprise.
+    Canvas RGBA 100% transparent autour de la bulle.
     """
     try:
-        from PIL import Image, ImageDraw, ImageFont, ImageFilter
+        from PIL import Image, ImageDraw, ImageFont
         import random as _rnd
     except ImportError:
         return False
 
-    # Canvas large avec marge généreuse pour les spikes qui débordent
-    PAD = max(size // 5, 40)
-    W = H = size + PAD * 2
-    cx, cy = W // 2, H // 2
+    FONT = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+    BLACK = (0, 0, 0, 255)
+    WHITE = (255, 255, 255, 255)
 
-    # Fond TOTALEMENT transparent — pas de rectangle blanc
+    # Couleurs selon le style
+    if style == "shout":
+        bg_col   = (255, 240, 30, 255)   # jaune vif
+        txt_col  = (180, 0, 0, 255)       # rouge foncé
+        sw_out   = max(7, size // 22)
+    elif style == "shock":
+        bg_col   = (255, 80, 30, 255)    # orange choc
+        txt_col  = (255, 255, 255, 255)
+        sw_out   = max(7, size // 22)
+    elif style == "thought":
+        bg_col   = (230, 240, 255, 245)  # bleu très pâle
+        txt_col  = (20, 20, 120, 255)
+        sw_out   = max(5, size // 28)
+    else:  # normal
+        bg_col   = (255, 255, 255, 250)
+        txt_col  = (10, 10, 10, 255)
+        sw_out   = max(6, size // 25)
+
+    PAD   = max(size // 8, 20)
+    # Canvas large pour laisser la place à la queue qui dépasse
+    TAIL  = int(size * 0.30)   # longueur queue
+    W = size + PAD * 2
+    H = int(size * 0.72) + PAD * 2 + TAIL
+
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d   = ImageDraw.Draw(img)
 
-    # Couleur principale
-    ch = color_hex.lstrip("#")
-    cr, cg, cb = int(ch[0:2],16), int(ch[2:4],16), int(ch[4:6],16)
-    col_main  = (cr, cg, cb, 255)
-    col_light = (min(255,cr+120), min(255,cg+120), min(255,cb+80), 255)
-    col_dark  = (max(0,cr-60), max(0,cg-60), max(0,cb-60), 255)
-    BLACK     = (0, 0, 0, 255)
-    WHITE     = (255, 255, 255, 255)
+    # Zone de la bulle (sans la queue)
+    bx1, by1 = PAD, PAD
+    bx2, by2 = W - PAD, PAD + int(size * 0.72)
+    bcx = (bx1 + bx2) // 2
+    bcy = (by1 + by2) // 2
+    brad = int(size * 0.28)   # rayon coins arrondis
 
-    stroke_w = max(6, size // 28)   # contour épais proportionnel
+    if style == "shock":
+        # Bulle dentelée — étoile irrégulière à beaucoup de pointes
+        _rnd.seed(hash(text) % 9999)
+        n_spikes = 18
+        r_out = (bx2 - bx1) // 2
+        r_in  = int(r_out * 0.78)
+        pts = []
+        for i in range(n_spikes * 2):
+            angle = _math.radians(i * 180 / n_spikes - 90)
+            r = r_out if i % 2 == 0 else r_in + _rnd.randint(-int(r_in*0.07), int(r_in*0.07))
+            pts.append((bcx + r * _math.cos(angle), bcy + r * _math.sin(angle)))
+        pts_s = [(bcx + (r + sw_out*1.5)*_math.cos(_math.radians(i*180/n_spikes-90)),
+                  bcy + (r + sw_out*1.5)*_math.sin(_math.radians(i*180/n_spikes-90)))
+                 for i, r in [(i, r_out if i%2==0 else r_in) for i in range(n_spikes*2)]]
+        d.polygon(pts_s, fill=BLACK)
+        d.polygon(pts, fill=bg_col)
+    elif style == "thought":
+        # Nuage de bulles circulaires imbriquées
+        d.ellipse([bx1-sw_out, by1-sw_out, bx2+sw_out, by2+sw_out], fill=BLACK)
+        d.ellipse([bx1, by1, bx2, by2], fill=bg_col)
+        # Bosses sur le bord
+        for angle_deg in range(0, 360, 25):
+            angle = _math.radians(angle_deg)
+            bx = bcx + int((bx2-bx1)//2 * _math.cos(angle))
+            by = bcy + int((by2-by1)//2 * _math.sin(angle))
+            br = int(size * 0.065)
+            d.ellipse([bx-br-sw_out, by-br-sw_out, bx+br+sw_out, by+br+sw_out], fill=BLACK)
+            d.ellipse([bx-br, by-br, bx+br, by+br], fill=bg_col)
+    else:
+        # Bulle arrondie standard / shout
+        d.rounded_rectangle([bx1-sw_out, by1-sw_out, bx2+sw_out, by2+sw_out],
+                             radius=brad+sw_out, fill=BLACK)
+        d.rounded_rectangle([bx1, by1, bx2, by2], radius=brad, fill=bg_col)
 
-    try:
-        font_big = ImageFont.truetype(
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            max(20, int(size * 0.30)))
-        font_med = ImageFont.truetype(
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            max(14, int(size * 0.20)))
-        font_sm  = ImageFont.truetype(
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            max(11, int(size * 0.14)))
-    except Exception:
-        font_big = font_med = font_sm = ImageFont.load_default()
+    # ── Queue pointue BD ──────────────────────────────────────────────
+    if style not in ("thought", "shock"):
+        if tail_side == "right":
+            # Queue bas-droite
+            tx0 = bcx + int(size * 0.12)
+            tx1 = bx2 - int(size * 0.08)
+            ty  = by2
+            tip = (W - PAD//2, H - PAD//2)
+        elif tail_side == "left":
+            tx0 = bcx - int(size * 0.12)
+            tx1 = bx1 + int(size * 0.08)
+            ty  = by2
+            tip = (PAD//2, H - PAD//2)
+        elif tail_side == "bottom-right":
+            tx0 = bx2 - int(size * 0.22)
+            tx1 = bx2
+            ty  = by2
+            tip = (bx2 + int(size * 0.10), H - PAD//3)
+        else:  # bottom-left
+            tx0 = bx1
+            tx1 = bx1 + int(size * 0.22)
+            ty  = by2
+            tip = (bx1 - int(size * 0.10), H - PAD//3)
 
-    # ── SPLAT — éclaboussure organique style slime BD ─────────────────
-    if stype == "splat":
-        _rnd.seed(hash(text or "splat") % 9999)
-        r_core = int(size * 0.34)
-
-        # Tentacules irrégulières rayonnantes — vraie éclaboussure BD
-        n_arms = _rnd.randint(11, 15)
-        for i in range(n_arms):
-            angle = _math.radians(i * 360 / n_arms + _rnd.randint(-14, 14))
-            arm_len = int(size * _rnd.uniform(0.40, 0.60))
-            arm_w   = _rnd.randint(int(size*0.06), int(size*0.14))
-            tip_x = cx + int(arm_len * _math.cos(angle))
-            tip_y = cy + int(arm_len * _math.sin(angle))
-            # Contour bras
-            d.line([(cx, cy), (tip_x, tip_y)], fill=BLACK, width=arm_w + stroke_w*2)
-            d.line([(cx, cy), (tip_x, tip_y)], fill=col_main, width=arm_w)
-            # Goutte au bout
-            drop_r = _rnd.randint(int(size*0.05), int(size*0.10))
-            d.ellipse([tip_x-drop_r-stroke_w, tip_y-drop_r-stroke_w,
-                       tip_x+drop_r+stroke_w, tip_y+drop_r+stroke_w], fill=BLACK)
-            d.ellipse([tip_x-drop_r, tip_y-drop_r,
-                       tip_x+drop_r, tip_y+drop_r], fill=col_main)
-
-        # Corps central épais
-        d.ellipse([cx-r_core-stroke_w*2, cy-r_core-stroke_w*2,
-                   cx+r_core+stroke_w*2, cy+r_core+stroke_w*2], fill=BLACK)
-        d.ellipse([cx-r_core, cy-r_core, cx+r_core, cy+r_core], fill=col_main)
-
-        # Reflet luisant style slime
-        hl_r = int(r_core * 0.28)
-        d.ellipse([cx-hl_r*2, cy-hl_r*2, cx-hl_r//2, cy-hl_r//2], fill=col_light)
-
-        # Texte au centre
-        if text:
-            _bd_stroke_text(d, text[:8], font_big, cx, cy, WHITE, BLACK, sw=stroke_w)
-
-    # ── EXPLOSION — étoile pointue chaotique style BD choc ─────────────
-    elif stype == "impact":
-        _rnd.seed(hash(text or "BOOM") % 8888)
-        # Étoile principale — très pointue, irrégulière
-        r_out = int(size * 0.46)
-        r_in  = int(size * 0.17)
-        n_pts = _rnd.randint(9, 13)
-        pts_outer = _spiky_polygon(cx, cy, n_pts, r_out, r_in, angle_offset=-90,
-                                   jitter=int(size*0.04), rnd=_rnd)
-        # Ombre décalée
-        shadow_pts = [(x+5, y+6) for x,y in pts_outer]
-        d.polygon(shadow_pts, fill=(0,0,0,160))
-        # Contour noir épais
-        pts_stroke = _spiky_polygon(cx, cy, n_pts, r_out+stroke_w*2, r_in+stroke_w,
-                                    angle_offset=-90, jitter=int(size*0.02), rnd=None)
-        d.polygon(pts_stroke, fill=BLACK)
-        # Corps explosion dégradé simulé (deux couches)
-        d.polygon(pts_outer, fill=col_main)
-        pts_inner = _spiky_polygon(cx, cy, n_pts, int(r_out*0.65), int(r_in*0.80),
-                                   angle_offset=-90)
-        d.polygon(pts_inner, fill=col_light)
-
-        # Texte central en capitales italiques simulées via décalage
-        label = text[:6] if text else "BOOM!"
-        _bd_stroke_text(d, label, font_big, cx, cy, BLACK, WHITE, sw=stroke_w)
-        # Double trait sous le texte — style BD classique
-        tw = len(label) * int(size*0.18)
-        ty = cy + int(size*0.17)
-        d.rectangle([cx-tw//2, ty, cx+tw//2, ty+max(3,stroke_w//2)], fill=BLACK)
-
-    # ── BULLE BD — vraie bulle de BD irrégulière avec queue pointue ────
-    elif stype == "bubble":
-        _rnd.seed(hash(text or "bubble") % 7777)
-        # Ellipse légèrement asymétrique
-        bw = int(size * 0.88)
-        bh = int(size * 0.58)
-        bx = cx - bw // 2
-        by = cy - bh // 2 - int(size * 0.08)
-
-        # Ombre
-        d.ellipse([bx+5, by+7, bx+bw+5, by+bh+7], fill=(0,0,0,150))
-        # Contour BD épais
-        d.ellipse([bx-stroke_w, by-stroke_w, bx+bw+stroke_w, by+bh+stroke_w], fill=BLACK)
-        d.ellipse([bx, by, bx+bw, by+bh], fill=WHITE)
-
-        # Queue pointue BD (triangle irrégulier)
-        qx = bx + int(bw * 0.25)
-        qy = by + bh
-        tail = [
-            (qx, qy),
-            (qx + int(bw*0.22), qy - int(bh*0.08)),
-            (qx - int(bw*0.04), qy + int(size*0.28))
+        tail_pts = [(tx0, ty), (tx1, ty), tip]
+        # Contour queue
+        d.polygon(tail_pts, fill=BLACK)
+        # Corps queue (légèrement rentrant pour l'épaisseur du contour)
+        shrink = sw_out
+        tail_in = [
+            (tx0 + shrink, ty - shrink//2),
+            (tx1 - shrink, ty - shrink//2),
+            tip
         ]
-        d.polygon([(p[0]+3,p[1]+4) for p in tail], fill=(0,0,0,150))
-        d.polygon(tail, fill=BLACK)
-        tail_inner = [
-            (qx + stroke_w//2, qy),
-            (qx + int(bw*0.20), qy - int(bh*0.06)),
-            (qx - int(bw*0.01), qy + int(size*0.22))
-        ]
-        d.polygon(tail_inner, fill=WHITE)
+        d.polygon(tail_in, fill=bg_col)
+    elif style == "thought":
+        # Queue bulles qui diminuent
+        if tail_side in ("right", "bottom-right"):
+            bpos = [(W - PAD - int(size*0.08), H - TAIL//2),
+                    (W - PAD//2 - int(size*0.02), H - TAIL//5)]
+        else:
+            bpos = [(PAD + int(size*0.08), H - TAIL//2),
+                    (PAD//2 + int(size*0.02), H - TAIL//5)]
+        radii = [int(size*0.065), int(size*0.038)]
+        for (bpx, bpy), br in zip(bpos, radii):
+            d.ellipse([bpx-br-sw_out, bpy-br-sw_out, bpx+br+sw_out, bpy+br+sw_out], fill=BLACK)
+            d.ellipse([bpx-br, bpy-br, bpx+br, bpy+br], fill=bg_col)
 
-        # Reflet en haut à gauche
-        hl_x = bx + int(bw*0.15)
-        hl_y = by + int(bh*0.15)
-        d.ellipse([hl_x, hl_y, hl_x+int(bw*0.28), hl_y+int(bh*0.20)],
-                  fill=(255,255,255,180))
+    # ── Texte ──────────────────────────────────────────────────────────
+    # Découpe le texte en lignes selon la largeur disponible
+    usable_w = bx2 - bx1 - int(size * 0.12)
+    words = text.upper().split()
 
-        # Texte
-        if text:
-            words = text.upper().split()
-            if len(words) <= 2:
-                label = " ".join(words)
-                _bd_stroke_text(d, label, font_big, bx+bw//2, by+bh//2, (180,0,0,255), BLACK, sw=stroke_w)
+    font_size = max(22, int(size * 0.26))
+    try:    font_obj = ImageFont.truetype(FONT, font_size)
+    except: font_obj = ImageFont.load_default()
+
+    # Réduire la police si le texte est trop long
+    for attempt in range(5):
+        lines = []
+        current = ""
+        for w in words:
+            test = (current + " " + w).strip()
+            try:    tw = font_obj.getlength(test)
+            except: tw = len(test) * font_size * 0.6
+            if tw > usable_w and current:
+                lines.append(current)
+                current = w
             else:
-                mid = len(words) // 2
-                l1 = " ".join(words[:mid])
-                l2 = " ".join(words[mid:])
-                _bd_stroke_text(d, l1, font_med, bx+bw//2, by+bh//2 - int(size*0.09),
-                                (180,0,0,255), BLACK, sw=stroke_w-2)
-                _bd_stroke_text(d, l2, font_med, bx+bw//2, by+bh//2 + int(size*0.09),
-                                (20,20,20,255), BLACK, sw=stroke_w-2)
-        else:
-            # Sans texte : lignes de choc BD (hachures expressives)
-            for i in range(3):
-                lx = bx + int(bw*(0.20 + i*0.25))
-                d.line([(lx, by+int(bh*0.25)), (lx+int(bw*0.08), by+int(bh*0.75))],
-                       fill=(150,0,0,220), width=max(3, stroke_w//2))
+                current = test
+        if current:
+            lines.append(current)
 
-    # ── STAR — étoile chaotique à 7 branches asymétriques ─────────────
-    elif stype == "star":
-        _rnd.seed(hash(text or "star") % 6666)
-        n_branches = 7   # impair = plus dynamique qu'un 8 branches symétrique
-        r_out = int(size * 0.46)
-        r_in  = int(size * 0.14)  # creux très prononcé = branches très pointues
-        pts   = _spiky_polygon(cx, cy, n_branches, r_out, r_in,
-                               angle_offset=-90, jitter=int(size*0.03), rnd=_rnd)
+        # Vérifier que tout rentre
+        line_h = int(font_size * 1.25)
+        total_h = len(lines) * line_h
+        if total_h <= (by2 - by1 - int(size * 0.08)):
+            break
+        font_size = int(font_size * 0.85)
+        try:    font_obj = ImageFont.truetype(FONT, font_size)
+        except: pass
 
-        # Ombre
-        d.polygon([(x+5,y+6) for x,y in pts], fill=(0,0,0,160))
-        # Contour noir épais
-        pts_s = _spiky_polygon(cx, cy, n_branches, r_out+stroke_w*2, r_in+stroke_w,
-                               angle_offset=-90)
-        d.polygon(pts_s, fill=BLACK)
-        # Corps jaune / couleur
-        d.polygon(pts, fill=(255, 215, 0, 255))
-        # Surbrillance centre
-        pts_c = _spiky_polygon(cx, cy, n_branches, int(r_out*0.52), int(r_in*0.90),
-                               angle_offset=-90)
-        d.polygon(pts_c, fill=(255, 245, 100, 255))
+    line_h  = int(font_size * 1.28)
+    n_lines = len(lines)
+    start_y = bcy - (n_lines - 1) * line_h // 2
 
-        # Texte
-        if text:
-            label = text.upper()[:7]
-            _bd_stroke_text(d, label, font_big, cx, cy, (160, 0, 0, 255), BLACK, sw=stroke_w)
-        else:
-            # Étoile vide : petit cercle central
-            d.ellipse([cx-int(size*0.07), cy-int(size*0.07),
-                       cx+int(size*0.07), cy+int(size*0.07)], fill=BLACK)
-            d.ellipse([cx-int(size*0.04), cy-int(size*0.04),
-                       cx+int(size*0.04), cy+int(size*0.04)], fill=(255,200,0,255))
+    sw_txt = max(4, font_size // 9)
+    for li, line in enumerate(lines):
+        ly = start_y + li * line_h
+        _bd_stroke_text(d, line, font_obj, bcx, ly, txt_col, BLACK, sw=sw_txt)
 
-    # ── ZAP — éclair BD massif + trait de vitesse ──────────────────────
-    elif stype == "zap":
-        # Éclair principal — forme classique mais plus massive
-        zap = [
-            (int(W*0.58), int(H*0.03)),
-            (int(W*0.26), int(H*0.48)),
-            (int(W*0.52), int(H*0.46)),
-            (int(W*0.20), int(H*0.97)),
-            (int(W*0.74), int(H*0.42)),
-            (int(W*0.48), int(H*0.44)),
-            (int(W*0.76), int(H*0.03)),
-        ]
-        # Ombre
-        d.polygon([(x+5,y+6) for x,y in zap], fill=(0,0,0,180))
-        # Contour noir épais
-        zap_s = [(x + (stroke_w if x > cx else -stroke_w),
-                  y + (stroke_w if y > cy else -stroke_w)) for x,y in zap]
-        d.polygon(zap_s, fill=BLACK)
-        # Corps jaune électrique
-        d.polygon(zap, fill=(255, 235, 0, 255))
-        # Reflet blanc interne
-        zap_hl = [(int(W*0.55), int(H*0.07)),
-                  (int(W*0.34), int(H*0.44)),
-                  (int(W*0.50), int(H*0.43)),
-                  (int(W*0.40), int(H*0.72)),
-                  (int(W*0.62), int(H*0.42)),
-                  (int(W*0.50), int(H*0.43)),
-                  (int(W*0.68), int(H*0.07))]
-        d.polygon(zap_hl, fill=(255, 255, 180, 160))
-
-        # Traits de vitesse à gauche
-        for i, frac in enumerate([0.25, 0.45, 0.65]):
-            lx_end = int(W * 0.18)
-            lx_start = int(W * (0.05 + i * 0.04))
-            ly = int(H * frac)
-            d.line([(lx_start, ly), (lx_end, ly)],
-                   fill=BLACK, width=max(3, stroke_w//2))
-            d.line([(lx_start+2, ly), (lx_end-2, ly)],
-                   fill=(255,235,0,200), width=max(2, stroke_w//3))
-
-    # ── ARROW — flèche BD massive avec contour ─────────────────────────
-    elif stype == "arrow":
-        pts_a = [
-            (int(W*0.95), cy),                          # pointe droite
-            (int(W*0.52), int(H*0.14)),                 # épaule haute droite
-            (int(W*0.52), int(H*0.33)),                 # rentrant haut
-            (int(W*0.08), int(H*0.33)),                 # gauche haut
-            (int(W*0.08), int(H*0.67)),                 # gauche bas
-            (int(W*0.52), int(H*0.67)),                 # rentrant bas
-            (int(W*0.52), int(H*0.86)),                 # épaule basse droite
-        ]
-        d.polygon([(x+5,y+6) for x,y in pts_a], fill=(0,0,0,160))
-        pts_s = [(x + (stroke_w if x > cx else -stroke_w),
-                  y + (stroke_w if y > cy else -stroke_w)) for x,y in pts_a]
-        d.polygon(pts_s, fill=BLACK)
-        d.polygon(pts_a, fill=col_main)
-        # Reflet sur la pointe
-        hl = [(int(W*0.90), cy), (int(W*0.60), int(H*0.22)), (int(W*0.60), int(H*0.38))]
-        d.polygon(hl, fill=col_light)
+    # Reflet subtil sur la bulle (haut-gauche)
+    if style == "normal":
+        hl_w = int((bx2-bx1) * 0.32)
+        hl_h = int((by2-by1) * 0.18)
+        d.ellipse([bx1 + int(size*0.08), by1 + int(size*0.05),
+                   bx1 + int(size*0.08) + hl_w,
+                   by1 + int(size*0.05) + hl_h],
+                  fill=(255,255,255,70))
 
     img.save(out_path)
     return True
 
 
-
 def _sticker_overlay_filter(stickers, video_w, video_h):
     """
-    Filter_complex FFmpeg — overlay PNG stickers avec fade alpha via loop+trim.
-    Approche robuste : chaque PNG est loopé sur toute la durée vidéo,
-    le timing est géré par enable + fade filter local.
+    Filter_complex FFmpeg — overlay PNG bulles avec fade alpha.
     """
     if not stickers:
         return [], "", 0
 
-    input_args  = []
+    input_args   = []
     filter_parts = []
-    prev_label  = "0:v"
-    nb_ok = 0
+    prev_label   = "0:v"
+    nb_ok        = 0
 
     for idx, s in enumerate(stickers):
         img_path = f"_sticker_{idx}.png"
-        stype = s.get("type",   "star")
-        text  = s.get("text",   "")
-        color = s.get("color",  "#FF2200")
-        sz    = s.get("size",   int(video_w * 0.28))
-        x_pct = s.get("x_pct", 0.82)
-        y_pct = s.get("y_pct", 0.38)
+        text  = s.get("text",    "?!")
+        style = s.get("style",   "normal")
+        tail  = s.get("tail",    "right")
+        sz    = s.get("size",    int(video_w * 0.52))
+        x_pct = s.get("x_pct",  0.78)
+        y_pct = s.get("y_pct",  0.22)
         t0    = float(s.get("t_start", 0.8))
-        tdur  = float(s.get("t_dur",   1.3))
-        anim  = s.get("anim",   "pop")
+        tdur  = float(s.get("t_dur",   2.0))
 
-        ok = _gen_sticker_png(stype, text, color, sz, img_path)
+        ok = _gen_speech_bubble(text, sz, img_path, tail_side=tail, style=style)
         if not ok:
             continue
 
-        # Clamp position dans la zone visible (hors letterbox 65px)
-        lb, margin = 65, 15
-        px = int(video_w  * x_pct - sz / 2)
-        py = int(video_h * y_pct - sz / 2)
-        px = max(margin, min(px, video_w  - sz - margin))
-        py = max(lb + margin, min(py, video_h - lb - sz - margin))
+        # Charger le PNG pour connaître sa taille réelle
+        try:
+            from PIL import Image as _PILImage
+            _im = _PILImage.open(img_path)
+            png_w, png_h = _im.size
+            _im.close()
+        except Exception:
+            png_w = png_h = sz + sz // 4 + 40
+
+        # Position : coin haut-droit ou haut-gauche selon tail_side
+        # La queue pointe vers le bas → bulle au-dessus du personnage
+        px = int(video_w  * x_pct - png_w / 2)
+        py = int(video_h * y_pct - png_h / 2)
+        # Clamp dans la zone visible (hors letterbox 55px)
+        lb = 55
+        px = max(4, min(px, video_w  - png_w - 4))
+        py = max(lb + 4, min(py, video_h - lb - png_h - 4))
 
         t_end    = t0 + tdur
-        fade_in  = min(0.12, tdur * 0.15)
-        fade_out = min(0.15, tdur * 0.18)
+        fade_in  = min(0.15, tdur * 0.12)
+        fade_out = min(0.20, tdur * 0.15)
         hold     = max(0.1, tdur - fade_in - fade_out)
         enable   = f"between(t,{t0:.3f},{t_end:.3f})"
 
-        # Chaîne de filtre sur le PNG :
-        # 1. scale à la bonne taille
-        # 2. loop pour couvrir toute la durée de la vidéo (999 frames suffit)
-        # 3. fade in puis fade out (en temps local depuis le début du PNG)
-        # 4. setpts pour décaler le début au bon moment dans la timeline
-        vf_sticker = (
+        vf_stk = (
             f"[{idx+1}:v]"
-            f"scale={sz}:{sz}:flags=lanczos,"
             f"format=rgba,"
             f"loop=loop=-1:size=1,"
             f"trim=start=0:end={tdur:.3f},"
@@ -1131,14 +1049,14 @@ def _sticker_overlay_filter(stickers, video_w, video_h):
             f"setpts=PTS+{t0:.3f}/TB"
             f"[s{idx}]"
         )
-        overlay_f = (
+        ovl = (
             f"[{prev_label}][s{idx}]"
             f"overlay=x={px}:y={py}:format=auto:enable='{enable}'"
             f"[v{idx}]"
         )
 
-        filter_parts.append(vf_sticker)
-        filter_parts.append(overlay_f)
+        filter_parts.append(vf_stk)
+        filter_parts.append(ovl)
         prev_label = f"v{idx}"
         input_args.extend(["-i", img_path])
         nb_ok += 1
@@ -1146,11 +1064,9 @@ def _sticker_overlay_filter(stickers, video_w, video_h):
     if not filter_parts:
         return [], "", 0
 
-    # Assembler le filter_complex et renommer le dernier [vN] en [vout]
     last_label = f"[v{nb_ok-1}]"
-    chain = ";".join(filter_parts)
-    # Remplacer la dernière occurrence du label final par [vout]
-    last_idx = chain.rfind(last_label)
+    chain      = ";".join(filter_parts)
+    last_idx   = chain.rfind(last_label)
     if last_idx != -1:
         final_filter = chain[:last_idx] + "[vout]" + chain[last_idx+len(last_label):]
     else:
@@ -1158,11 +1074,10 @@ def _sticker_overlay_filter(stickers, video_w, video_h):
     return input_args, final_filter, nb_ok
 
 
-
 def sticker_analysis(segments, opts, vira_result):
     """
-    Demande au LLM de placer des stickers intelligents.
-    Retourne une liste de sticker dicts, ou des stickers par défaut si LLM absent/echec.
+    Demande au LLM de placer des bulles de dialogue BD contextuelles.
+    Le texte doit être lié à l'action visible dans chaque segment.
     """
     api_key = os.environ.get("GITHUB_TOKEN", "")
 
@@ -1173,12 +1088,11 @@ def sticker_analysis(segments, opts, vira_result):
     W, H = cfg(opts, "resolution").split("x")
     W_px = int(W)
 
-    # Durée de contenu réel (sans logo 2.5s)
     content_dur = sum(s["dur"] for s in segments)
 
-    # Construire le résumé des segments avec timecodes absolus
+    # Timecodes absolus par segment
     segs_lines = []
-    t_cursor = 0.0
+    t_cursor   = 0.0
     for i, s in enumerate(segments):
         role = "hook" if i == 0 else ("punch" if i == len(segments)-1 else "core")
         segs_lines.append(
@@ -1191,91 +1105,102 @@ def sticker_analysis(segments, opts, vira_result):
     vira_recs = ""
     if vira_result:
         recs = vira_result.get("recs", [])
-        vira_recs = "  Viralité : " + " | ".join(r["text"] for r in recs[:3])
+        vira_recs = "  Viralité : " + " | ".join(r["text"] for r in recs[:2])
 
     if not api_key:
-        print("  [Stickers] GITHUB_TOKEN absent — stickers par défaut")
-        return _default_stickers(W_px, content_dur)
+        print("  [Stickers] GITHUB_TOKEN absent — bulles par défaut")
+        return _default_stickers(W_px, content_dur, segments)
 
     prompt = (
-        f"Tu es un directeur artistique BD style Garbage Pail Kids / Les Crados — humour absurde, impact visuel maximal.\n"
-        f"Place 2-3 stickers BD PERCUTANTS sur cette vidéo TikTok de {content_dur:.1f}s.\n\n"
+        f"Tu es un directeur artistique BD Les Crados (Garbage Pail Kids français).\n"
+        f"Vidéo TikTok = {content_dur:.1f}s — cartes collector animées avec personnage grotesque.\n\n"
         f"SEGMENTS :\n{segs_desc}\n{vira_recs}\n\n"
-        f"TYPES DE STICKERS :\n"
-        f"- splat : éclaboussure slime (onomatopée courte ou vide)\n"
-        f"- impact : explosion étoilée pointue (BOOM! POW! BAM! BEURK! OUAF!)\n"
-        f"- bubble : bulle BD irrégulière (texte percutant ≤10 chars MAJUSCULES)\n"
-        f"- star : étoile 7 branches chaotique (texte ≤6 chars ou vide)\n"
-        f"- zap : éclair électrique (pas de texte)\n\n"
-        f"COULEURS percutantes : splat=#00CC44 ou #AA00FF | impact=#FF2200 ou #FF8800 | star=#FFD700 ou #00DDFF | zap=#FFEE00\n\n"
-        f"PLACEMENT : x_pct < 0.22 (gauche) ou > 0.78 (droite) · size_pct 0.28-0.35 · t_dur 1.2-2.0s\n"
-        f"Textes : ONOMATOPÉES BD (BOUM! SPLATCH! ARGH! YAK! BEURK! SPLASH!)\n\n"
+        f"Place 2-3 BULLES DE DIALOGUE BD pour réagir à l'action de chaque segment.\n"
+        f"Les bulles doivent avoir du TEXTE qui commente l'action visible — absurde, choquant, drôle.\n"
+        f"Exemples de textes BD Les Crados : 'AÏÏE!', 'C PAS BON...', 'MIAM!', 'AU SECOURS!',\n"
+        f"'GNARK!', 'SLURP!', 'BEURK!', 'JE SENS RIEN!', 'ENCORE!', 'MA TÊTE!', etc.\n\n"
+        f"STYLES disponibles :\n"
+        f"- normal  : bulle blanche classique BD (réaction calme)\n"
+        f"- shout   : bulle JAUNE (cri, exclamation forte)\n"
+        f"- shock   : bulle ORANGE dentelée (surprise extrême, choc)\n"
+        f"- thought : bulle NUAGE bleue (pensée, réflexion intérieure)\n\n"
+        f"RÈGLES DE PLACEMENT :\n"
+        f"- La queue de la bulle pointe vers le BAS (vers le personnage)\n"
+        f"- tail : 'right' (queue bas-droite) ou 'left' (queue bas-gauche)\n"
+        f"- x_pct : 0.72-0.92 (droite) ou 0.08-0.28 (gauche)\n"
+        f"- y_pct : 0.15-0.40 (haut de la vidéo — au-dessus du personnage)\n"
+        f"- size_pct : 0.55-0.70 (grande = lisible)\n"
+        f"- t_dur : 1.8-2.8s\n"
+        f"- Espacer les bulles dans le temps (pas de chevauchement)\n"
+        f"- Texte max 12 caractères espaces inclus\n\n"
         f"JSON UNIQUEMENT :\n"
         f"{{\"stickers\": [{{"
-        f"\"type\":\"<splat|impact|bubble|star|zap>\","
-        f"\"text\":\"<ONOMATOPÉE ou vide>\","
-        f"\"color\":\"<hex percutant>\","
-        f"\"size_pct\":<float 0.28-0.35>,"
-        f"\"x_pct\":<float bords>,"
-        f"\"y_pct\":<float 0.15-0.80>,"
+        f"\"text\":\"<TEXTE BD MAX 12 CHARS>\","
+        f"\"style\":\"<normal|shout|shock|thought>\","
+        f"\"tail\":\"<right|left>\","
+        f"\"size_pct\":<float 0.55-0.70>,"
+        f"\"x_pct\":<float>,"
+        f"\"y_pct\":<float 0.15-0.40>,"
         f"\"t_start\":<float>,"
-        f"\"t_dur\":<float 1.2-2.0>"
+        f"\"t_dur\":<float 1.8-2.8>"
+        f"}}]}}"
     )
 
-    print("  [Stickers] Analyse IA en cours…")
+    print("  [Stickers] Génération bulles BD en cours…")
     try:
-        raw = _call_github_models(api_key, prompt)
+        raw  = _call_github_models(api_key, prompt)
         data = _extract_json(raw)
         stickers_raw = data.get("stickers", [])
         if not stickers_raw:
             raise ValueError("Liste vide")
     except Exception as e:
-        print(f"  [Stickers] Erreur API : {e} — stickers par défaut")
-        return _default_stickers(W_px, content_dur)
+        print(f"  [Stickers] Erreur API : {e} — bulles par défaut")
+        return _default_stickers(W_px, content_dur, segments)
 
     stickers = []
     for s in stickers_raw[:3]:
-        sz = max(200, min(300, int(W_px * float(s.get("size_pct", 0.28)))))
-        t0 = min(float(s.get("t_start", 1.0)), max(0.5, content_dur - 1.5))
+        sz   = max(int(W_px * 0.52), min(int(W_px * float(s.get("size_pct", 0.60))), int(W_px * 0.75)))
+        t0   = max(0.3, min(float(s.get("t_start", 0.8)), max(0.3, content_dur - 2.0)))
+        tdur = max(0.5, min(float(s.get("t_dur", 2.0)), content_dur - t0))
         stickers.append({
-            "type":    s.get("type",  "star"),
-            "text":    s.get("text",  ""),
-            "color":   s.get("color", "#FF2200"),
+            "text":    s.get("text",  "BEURK!"),
+            "style":   s.get("style", "normal"),
+            "tail":    s.get("tail",  "right"),
             "size":    sz,
             "x_pct":   float(s.get("x_pct",  0.82)),
-            "y_pct":   float(s.get("y_pct",  0.25)),
+            "y_pct":   float(s.get("y_pct",  0.22)),
             "t_start": t0,
-            "t_dur":   max(0.5, min(float(s.get("t_dur", 1.3)), content_dur - t0)),
-            "anim":    "pop",
+            "t_dur":   tdur,
         })
-        print(f"    🎯 {stickers[-1]['type']:8s} @ {t0:.1f}s  pos=({stickers[-1]['x_pct']:.2f},{stickers[-1]['y_pct']:.2f})")
+        print(f"    💬 \"{stickers[-1]['text']}\" ({stickers[-1]['style']}) "
+              f"@ {t0:.1f}s  tail={stickers[-1]['tail']}  pos=({stickers[-1]['x_pct']:.2f},{stickers[-1]['y_pct']:.2f})")
 
     return stickers
 
 
-def _default_stickers(W_px, content_dur):
-    """Stickers par défaut quand le LLM n'est pas disponible."""
-    if content_dur < 2.0:
+def _default_stickers(W_px, content_dur, segments=None):
+    """Bulles BD par défaut quand le LLM n'est pas disponible."""
+    if content_dur < 1.5:
         return []
-    sz = max(220, int(W_px * 0.32))  # 32% de largeur = ~230px sur 720p
+    sz = int(W_px * 0.60)
+    n  = len(segments) if segments else 1
     stickers = [
-        # Coin haut-droite — splat orange vif (contraste avec les cartes sombres/vertes)
-        {"type":"splat","text":"","color":"#FF6600","size":sz,
-         "x_pct":0.84,"y_pct":0.38,"t_start":min(0.8,content_dur*0.12),"t_dur":1.3,"anim":"pop"},
+        {"text": "AÏÏE!",  "style": "shout",  "tail": "right",
+         "size": sz, "x_pct": 0.82, "y_pct": 0.22,
+         "t_start": min(0.5, content_dur * 0.10), "t_dur": 2.2},
     ]
     if content_dur > 4.0:
-        # Côté gauche milieu — zap jaune électrique (visible sur tout fond)
         stickers.append(
-            {"type":"zap","text":"","color":"#FFE000","size":sz,
-             "x_pct":0.20,"y_pct":0.45,"t_start":content_dur*0.55,"t_dur":1.1,"anim":"pop"}
+            {"text": "BEURK!", "style": "shock", "tail": "left",
+             "size": sz, "x_pct": 0.18, "y_pct": 0.28,
+             "t_start": content_dur * 0.55, "t_dur": 2.0}
         )
-    print(f"  [Stickers] {len(stickers)} sticker(s) par défaut appliqués")
+    print(f"  [Stickers] {len(stickers)} bulle(s) BD par défaut")
     return stickers
 
+
 def apply_stickers(input_video, output_video, stickers, opts):
-    """
-    Applique les stickers animés sur la vidéo via FFmpeg overlay.
-    """
+    """Applique les bulles BD sur la vidéo via FFmpeg overlay."""
     if not stickers:
         run(f'cp "{input_video}" "{output_video}"')
         return
@@ -1285,19 +1210,18 @@ def apply_stickers(input_video, output_video, stickers, opts):
     H_px = int(H_str)
     crf  = cfg(opts, "crf")
 
-    # Valider les stickers : cap t_start à la durée de la vidéo - 1s
     try:
-        vid_dur = duration(input_video)
-        stickers = [s for s in stickers
-                    if s.get("t_start", 0) < vid_dur - 0.5]
+        vid_dur  = duration(input_video)
+        stickers = [s for s in stickers if s.get("t_start", 0) < vid_dur - 0.5]
         for s in stickers:
             s["t_start"] = max(0.1, min(s["t_start"], vid_dur - 1.0))
+            s["t_dur"]   = max(0.5, min(s.get("t_dur", 2.0), vid_dur - s["t_start"]))
         if not stickers:
-            print("  [Stickers] Tous les stickers hors durée — ignorés")
+            print("  [Stickers] Tous hors durée — ignorés")
             run(f'cp "{input_video}" "{output_video}"')
             return
     except Exception:
-        pass  # si durée non lisible, on continue quand même
+        pass
 
     input_args, filter_str, nb = _sticker_overlay_filter(stickers, W_px, H_px)
 
@@ -1314,11 +1238,10 @@ def apply_stickers(input_video, output_video, stickers, opts):
     )
     try:
         run(cmd)
-        print(f"  [Stickers] {nb} sticker(s) appliqué(s) ✅")
+        print(f"  [Stickers] {nb} bulle(s) appliquée(s) ✅")
     except Exception as e:
-        print(f"  [Stickers] ERREUR DÉTAILLÉE : {e}")
-        print(f"  [Stickers] CMD était : {cmd[:300]}")
-        print(f"  [Stickers] Fallback cp — output sans stickers")
+        print(f"  [Stickers] ERREUR : {e}")
+        print(f"  [Stickers] Fallback cp — output sans bulles")
         run(f'cp "{input_video}" "{output_video}"')
 
 
