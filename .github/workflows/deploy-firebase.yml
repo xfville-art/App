@@ -29,9 +29,7 @@ jobs:
         run: |
           firebase functions:config:set \
             github.token="${{ secrets.GITHUB_TOKEN_VIRACUT }}" \
-            --project viracut-29189 \
-            --json \
-            GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json
+            --project viracut-29189
         env:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa.json
 
