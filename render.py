@@ -444,26 +444,37 @@ def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts, role="core"):
 
     clip_max = max(src_dur - in_pt, 1.0)
 
-    # ── Smart Cut OUT : inclure la punchline même si elle dépasse ────
-    # S'applique à PUNCH et CORE (le core peut contenir la scène virale)
-    # Seuil abaissé à 0.03 pour détecter les mouvements lents (clips AI)
-    if use_smart and role in ("punch", "core"):
+    # ── Smart Cut OUT : stratégie par rôle ──────────────────────────
+    #
+    # HOOK  → durée cible stricte (le hook doit rester court et percutant)
+    # CORE  → prend TOUTE la source disponible (peut contenir la scène
+    #          virale : recrachement, révélation, action clé)
+    # PUNCH → prend toute la source, en s'assurant d'inclure le pic d'action
+    #
+    # Logique : la durée LLM est un MINIMUM, jamais un plafond pour core/punch.
+    if role == "core":
+        # Toujours prendre tout le clip core disponible — la scène virale
+        # est souvent en fin de clip (ex: recrachement clous @4.5s sur 6s)
+        actual = clip_max
+        out_lbl = "full_core"
+        if actual > target_dur:
+            print(f"      core étendu : {target_dur:.2f}s → {actual:.2f}s (durée source complète)")
+
+    elif role == "punch" and use_smart:
+        # Pour le punch : chercher le pic d'action et prendre jusqu'à la fin
         peak = detect_punchline_peak(src, in_pt=in_pt, scene_thr=max(0.03, scene_thr * 0.5))
         if peak is not None:
-            min_dur_for_peak = peak + 0.8
-            if min_dur_for_peak > target_dur:
-                actual = min(min_dur_for_peak, clip_max)
-                out_lbl = f"peak_extended@{peak:.2f}s"
-                print(f"      punchline incluse → durée {target_dur:.2f}s → {actual:.2f}s")
-            else:
-                actual = min(target_dur, clip_max)
-                out_lbl = f"peak_ok@{peak:.2f}s"
+            # Prendre depuis in_pt jusqu'à la fin du clip (le pic est le début de l'action)
+            actual = clip_max
+            out_lbl = f"full_punch_peak@{peak:.2f}s"
+            print(f"      punch complet : pic @{peak:.2f}s → fin source {actual:.2f}s")
         else:
-            actual = min(target_dur, clip_max)
-            out_lbl = "no_peak"
+            actual = clip_max
+            out_lbl = "full_punch"
     else:
+        # Hook ou smart_off : durée cible stricte
         actual = min(target_dur, clip_max)
-        out_lbl = "no_peak"
+        out_lbl = "target_dur"
 
     actual = max(actual, 1.0)  # garde-fou absolu
 
@@ -1129,24 +1140,38 @@ def start():
         raw_punch = float(opts.get("punch_dur", 3.0))
         if n == 2:
             hook_d  = max(min(raw_hook,  src_durs[0]), 2.0)
-            punch_d = max(min(raw_punch, src_durs[1]), 3.0)
+            punch_d = src_durs[1]   # punch : durée source complète
             seg_durs = [hook_d, punch_d]
         elif n == 3:
             hook_d  = max(min(raw_hook,  src_durs[0]), 2.0)
-            core_d  = max(min(raw_core,  src_durs[1]), 2.0)
-            punch_d = max(min(raw_punch, src_durs[2]), 3.0)
+            # CORE et PUNCH : passer la durée source COMPLÈTE comme target_dur.
+            # build_cinema_segment utilisera toute la source pour ne pas
+            # couper la scène virale (recrachement, révélation, action clé).
+            core_d  = src_durs[1]
+            punch_d = src_durs[2]
             seg_durs = [hook_d, core_d, punch_d]
         else:
             seg_durs = []
             for k, sd in enumerate(src_durs):
                 if k == 0:
                     seg_durs.append(max(min(raw_hook, sd), 2.0))
-                elif k == len(src_durs) - 1:
-                    seg_durs.append(max(min(raw_punch, sd), 3.0))
                 else:
-                    seg_durs.append(max(min(raw_core, sd), 2.0))
-        print(f"  Durées source   : {[round(d,2) for d in src_durs]}")
-        print(f"  Durées PUNCH    : {[round(d,2) for d in seg_durs]}")
+                    # Tous les segments non-hook : durée source complète
+                    seg_durs.append(sd)
+        # Si le total core+punch dépasse le cap PUNCH (15s), passer en mode CINEMA
+        total_content = sum(seg_durs)
+        if total_content > 15.0:
+            print(f"  ⚠ Total {total_content:.1f}s > 15s → bascule en mode CINEMA pour fluidité")
+            opts["mode"] = "cinema"
+            mode_final   = "cinema"
+            # Recalculer seg_durs en mode cinema : clip_dur uniforme
+            cinema_target = min(total_content, cfg(opts, "cinema_dur") if total_content > cfg(opts, "cinema_dur") else total_content)
+            clip_dur_c = max(cinema_target / n, MIN_CLIP_DUR)
+            seg_durs = [min(clip_dur_c, sd) for sd in src_durs]
+            print(f"  Durées CINEMA   : {[round(d,2) for d in seg_durs]}")
+        else:
+            print(f"  Durées source   : {[round(d,2) for d in src_durs]}")
+            print(f"  Durées PUNCH    : {[round(d,2) for d in seg_durs]}")
     else:
         # CINEMA/AUTO : clip_dur déjà calculé, capper à la durée source
         seg_durs = [min(clip_dur, sd) for sd in src_durs]
