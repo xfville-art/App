@@ -1,16 +1,14 @@
 """
-render.py — ViraCut Studio v10  ★ LesCrados.Ai Edition ★  [Logo Pixar-style v2]
+render.py — ViraCut Studio v12  ★ LesCrados.Ai Edition ★
 ═════════════════════════════════════════════════════════
+v12 : SMART CUT ENGINE
+     — motion_start : détection du 1er frame d'action réelle (skip intro statique)
+     — punchline_seek : repérage du pic d'action dans le dernier clip
+     — zoom progressif adaptatif : push-in hook + explosion zoom punch
+     — grade BD renforcé : saturation/contraste Crados
+v11 : CONCAT CUT ENGINE + Stickers IA BD style (v2)
 v10 : VIRALITÉ ANALYSIS ENGINE
-     — analyse Claude API avant rendu FFmpeg
-     — score 0-100 + 5 axes + recommandations
-     — résultat JSON dans les logs GitHub Actions (parsé par App.html)
 v9  : DIALOGUE CUT ENGINE
-     — silencedetect FFmpeg pour trouver les pauses naturelles
-     — snap OUT : raccord à la pause la plus proche de la cible
-     — snap IN  : entrée après la première pause (pas de mot coupé)
-     — xfade adaptatif : durée ajustée selon contexte audio
-     — fallback propre si pas d'audio / pas de silence trouvé
 """
 import json, base64, os, subprocess, sys, re, urllib.request, urllib.error
 
@@ -34,13 +32,25 @@ DEFAULTS = {
     "cinema_lb_h":     80,
 
     # ── Dialogue Cut Engine ─────────────────────────────────────────
-    "dialogue_cut":       False,  # OFF — clips AI sans pauses audio détectables
-    "dialogue_noise_db":  -28,    # seuil de silence (dBFS)
-    "dialogue_min_pause": 0.08,   # duree min d une pause (s)
-    "dialogue_tolerance": 1.5,    # fenetre +/-s autour de la cible
-    "dialogue_in_snap":   False,  # désactivé — snap IN coupe le début de l'action
-    "dialogue_xfade_min": 0.15,   # xfade court si coupure en plein dialogue
-    "dialogue_xfade_max": 0.35,   # xfade long si coupure en silence
+    "dialogue_cut":       False,
+    "dialogue_noise_db":  -28,
+    "dialogue_min_pause": 0.08,
+    "dialogue_tolerance": 1.5,
+    "dialogue_in_snap":   False,
+    "dialogue_xfade_min": 0.15,
+    "dialogue_xfade_max": 0.35,
+
+    # ── Smart Cut Engine (v12) ──────────────────────────────────────
+    "smart_cut":          True,   # ON — détecte intro statique + pic punchline
+    "scene_thr":          0.06,   # seuil scenedetect (0.04=sensible, 0.10=strict)
+    "static_max_skip":    2.0,    # skip intro statique jusqu'à 2s max
+    "punch_zoom":         True,   # zoom-in progressif sur le clip punchline
+    "hook_zoom":          True,   # léger push-in sur le clip hook
+    "zoom_punch_scale":   1.10,   # zoom max sur la punchline (1.10 = +10%)
+    "zoom_hook_scale":    1.05,   # zoom max sur le hook (1.05 = +5%)
+    "grade_saturation":   1.18,   # saturation BD Crados
+    "grade_contrast":     1.15,   # contraste BD Crados
+    "grade_brightness":   -0.01,  # légère baisse luminosité
 }
 
 MIN_CLIP_DUR = 1.5
@@ -320,66 +330,170 @@ def append_logo(premain, opts):
 # ═══════════════════════════════════════════════════════════════════════
 # SEGMENTS CINEMA + DIALOGUE SNAP
 # ═══════════════════════════════════════════════════════════════════════
-def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts):
+
+# ═══════════════════════════════════════════════════════════════════════
+# SMART CUT ENGINE (v12) — détection intro statique + pic punchline
+# ═══════════════════════════════════════════════════════════════════════
+
+def detect_motion_start(path, scene_thr=0.06, max_skip=2.0):
+    """
+    Trouve le premier timestamp où l'action réelle commence.
+    Skip l'intro statique typique des clips AI/Grok (carte affichée avant animation).
+    Retourne (in_pt, label).
+    """
+    if not os.path.exists(path):
+        return 0.0, "no_file"
+    cmd = (
+        f'ffmpeg -i "{path}" '
+        f'-vf "select=gt(scene\\,{scene_thr}),showinfo" '
+        f'-f null - 2>&1'
+    )
+    r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    output = r.stdout + r.stderr
+    first_change = None
+    for line in output.splitlines():
+        if "pts_time:" in line and "showinfo" in line:
+            try:
+                t = float(line.split("pts_time:")[1].split()[0])
+                if first_change is None:
+                    first_change = t
+                    break
+            except Exception:
+                pass
+    if first_change is None:
+        return 0.0, "no_change"
+    if first_change < 0.08:
+        return 0.0, "no_static_intro"
+    in_pt = min(first_change, max_skip)
+    src_dur = duration(path)
+    if src_dur > 0 and in_pt > src_dur * 0.60:
+        return 0.0, "skip_too_large"
+    print(f"      motion_start : premier changement @{first_change:.3f}s → in_pt={in_pt:.3f}s")
+    return in_pt, f"skip_static@{first_change:.2f}s"
+
+
+def detect_punchline_peak(path, in_pt=0.0, scene_thr=0.05):
+    """
+    Repère le premier changement significatif dans la 2ème moitié du clip.
+    Pour Les Crados : révélation (bouche ouverte, explosion) souvent en fin de clip.
+    Retourne peak_t depuis in_pt, ou None.
+    """
+    if not os.path.exists(path):
+        return None
+    cmd = (
+        f'ffmpeg -i "{path}" '
+        f'-vf "select=gt(scene\\,{scene_thr}),showinfo" '
+        f'-f null - 2>&1'
+    )
+    r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    output = r.stdout + r.stderr
+    changes = []
+    for line in output.splitlines():
+        if "pts_time:" in line and "showinfo" in line:
+            try:
+                t = float(line.split("pts_time:")[1].split()[0])
+                if t >= in_pt:
+                    changes.append(t - in_pt)
+            except Exception:
+                pass
+    if not changes:
+        return None
+    src_dur = duration(path)
+    usable_dur = max(src_dur - in_pt, 1.0)
+    mid = usable_dur * 0.45
+    late_changes = [t for t in changes if t >= mid]
+    if late_changes:
+        peak = late_changes[0]
+        print(f"      punchline_peak : @{peak:.3f}s (depuis in_pt={in_pt:.3f}s)")
+        return peak
+    return None
+
+
+def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts, role="core"):
     """
     Extrait un segment depuis src avec :
-      - snap IN  : point d entree apres la premiere pause audio
-      - snap OUT : point de sortie cale sur la pause la plus proche
-      - Ken Burns + grade + pad sans coupure de bords
-    Retourne un dict avec les metadonnees du segment.
+      - Smart Cut IN  : skip intro statique via motion_start
+      - Smart Cut OUT : étend si punchline pas encore incluse (role=punch)
+      - Zoom progressif adaptatif selon le rôle (hook/core/punch)
+      - Grade BD renforcé
+    Retourne un dict avec les metadonnées du segment.
     """
     W, H    = cfg(opts, "resolution").split("x")
     fps     = cfg(opts, "fps")
     crf     = cfg(opts, "crf")
     src_dur = duration(src)
 
-    use_dialogue = cfg(opts, "dialogue_cut")
-    noise_db     = cfg(opts, "dialogue_noise_db")
-    min_pause    = cfg(opts, "dialogue_min_pause")
-    tolerance    = cfg(opts, "dialogue_tolerance")
-    do_in_snap   = cfg(opts, "dialogue_in_snap")
+    use_smart   = cfg(opts, "smart_cut")
+    scene_thr   = cfg(opts, "scene_thr")
+    max_skip    = cfg(opts, "static_max_skip")
+    do_pzoom    = cfg(opts, "punch_zoom")
+    do_hzoom    = cfg(opts, "hook_zoom")
+    zoom_punch  = cfg(opts, "zoom_punch_scale")
+    zoom_hook   = cfg(opts, "zoom_hook_scale")
+    sat         = cfg(opts, "grade_saturation")
+    cont        = cfg(opts, "grade_contrast")
+    bri         = cfg(opts, "grade_brightness")
 
-    # ── Detection des silences ───────────────────────────────────────
-    silences = detect_silences(src, noise_db, min_pause) if use_dialogue else []
-    if silences:
-        print(f"      Silences detectes : {len(silences)}"
-              f"  (1er: [{silences[0][0]:.2f}-{silences[0][1]:.2f}]s)")
+    # ── Smart Cut IN : skip intro statique ───────────────────────────
+    if use_smart:
+        in_pt, in_lbl = detect_motion_start(src, scene_thr=scene_thr, max_skip=max_skip)
     else:
-        print(f"      Aucun silence (seuil {noise_db}dB min {min_pause}s) -> cut brut")
+        in_pt, in_lbl = 0.0, "smart_off"
 
-    # ── Snap IN ──────────────────────────────────────────────────────
-    if use_dialogue and do_in_snap and silences:
-        in_pt, in_lbl = find_cut_in(silences, src_dur)
-    else:
-        in_pt, in_lbl = 0.0, "disabled"
-
-    # Recalibrer les silences en coordonnees locales (apres in_pt)
-    local_silences = []
-    for (s, e) in silences:
-        ls = s - in_pt
-        le = e - in_pt
-        if le > 0 and ls < target_dur + tolerance:
-            local_silences.append((max(0.0, ls), le))
-
-    # ── Snap OUT ─────────────────────────────────────────────────────
     clip_max = max(src_dur - in_pt, 1.0)
 
-    if use_dialogue and local_silences:
-        actual, out_lbl = find_cut_out(local_silences, target_dur, clip_max, tolerance)
+    # ── Smart Cut OUT : si role=punch, s'assurer d'inclure le pic ────
+    if use_smart and role == "punch":
+        peak = detect_punchline_peak(src, in_pt=in_pt, scene_thr=scene_thr * 0.85)
+        if peak is not None:
+            # On prend au minimum jusqu'au pic + 0.6s de résolution
+            min_dur_for_peak = peak + 0.6
+            actual = min(max(target_dur, min_dur_for_peak), clip_max)
+            out_lbl = f"peak_included@{peak:.2f}s"
+        else:
+            actual = min(target_dur, clip_max)
+            out_lbl = "no_peak"
     else:
-        actual  = min(target_dur, clip_max)
-        out_lbl = "no_silence"
+        actual = min(target_dur, clip_max)
+        out_lbl = "no_peak"
 
     actual = max(actual, 1.0)  # garde-fou absolu
 
     # ── Filtres video ────────────────────────────────────────────────
-    # Pas de scale ici — déjà fait en sanitisation à la réception des clips
-    # Uniquement fps et grade colorimétrique — style BD/carte collector Les Crados
-    # saturation légèrement boostée + contraste plus marqué pour look punchy
-    grade = "eq=saturation=1.10:brightness=-0.02:contrast=1.12,hue=h=0:s=1"
-    vf = f"fps={fps},{grade}"
+    # Grade BD renforcé — saturation/contraste Crados
+    grade = f"eq=saturation={sat}:brightness={bri}:contrast={cont}"
 
-    # ── Extraction (avec seek en entree = ultra rapide) ───────────────
+    # Zoom progressif adaptatif selon le rôle
+    # zoompan = lent (1 frame/output) — on utilise crop+scale pour la perf
+    # push-in : zoom de 1.0 → zoom_max sur toute la durée du segment
+    if role == "punch" and do_pzoom:
+        # Zoom-in explosif sur la punchline
+        zmax = zoom_punch
+        # scale légèrement oversized puis crop centré progressif
+        scale_w = int(int(W) * zmax)
+        scale_h = int(int(H) * zmax)
+        # Expression linéaire : crop_w va de scale_w*1.0 → int(W) sur nb_frames
+        # On utilise zoompan natif FFmpeg — plus simple et stable
+        zoom_filter = (
+            f"zoompan=z='min(zoom+{(zmax-1.0)/int(fps/1.2):.6f},{zmax})'"
+            f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+            f":d=1:s={W}x{H}"
+        )
+        vf = f"fps={fps},{grade},{zoom_filter}"
+    elif role == "hook" and do_hzoom:
+        # Léger push-in sur le hook — plus subtil
+        zmax = zoom_hook
+        zoom_filter = (
+            f"zoompan=z='min(zoom+{(zmax-1.0)/int(fps/1.5):.6f},{zmax})'"
+            f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+            f":d=1:s={W}x{H}"
+        )
+        vf = f"fps={fps},{grade},{zoom_filter}"
+    else:
+        # Core / pas de zoom : grade seul
+        vf = f"fps={fps},{grade}"
+
+    # ── Extraction ────────────────────────────────────────────────────
     ss_flag = f"-ss {in_pt:.3f}" if in_pt > 0.001 else ""
 
     if has_audio(src):
@@ -403,7 +517,7 @@ def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts):
         "in_pt":    in_pt,
         "out_pt":   in_pt + actual,
         "dur":      actual,
-        "silences": local_silences,
+        "silences": [],
     }
 
 
@@ -1227,15 +1341,15 @@ def start():
         sys.exit(1)
 
     print("=" * 60)
-    print("  ViraCut v11 -- LesCrados.Ai  [CONCAT CUT ENGINE]")
+    print("  ViraCut v12 -- LesCrados.Ai  [SMART CUT ENGINE]")
     print("=" * 60)
     print(f"  Clips recus        : {len(clips_raw)}")
-    print(f"  Dialogue cut       : {cfg(opts,'dialogue_cut')}")
-    print(f"  Bruit seuil        : {cfg(opts,'dialogue_noise_db')} dBFS")
-    print(f"  Pause min          : {cfg(opts,'dialogue_min_pause')}s")
-    print(f"  Tolerance snap     : +/-{cfg(opts,'dialogue_tolerance')}s")
-    print(f"  Snap IN            : {cfg(opts,'dialogue_in_snap')}")
-    print(f"  xfade dialogue  : {cfg(opts,'dialogue_xfade_min')}-{cfg(opts,'dialogue_xfade_max')}s")
+    print(f"  Smart Cut          : {cfg(opts,'smart_cut')}")
+    print(f"  Scene threshold    : {cfg(opts,'scene_thr')}")
+    print(f"  Static skip max    : {cfg(opts,'static_max_skip')}s")
+    print(f"  Hook zoom          : {cfg(opts,'hook_zoom')} (×{cfg(opts,'zoom_hook_scale')})")
+    print(f"  Punch zoom         : {cfg(opts,'punch_zoom')} (×{cfg(opts,'zoom_punch_scale')})")
+    print(f"  Grade              : sat={cfg(opts,'grade_saturation')} cont={cfg(opts,'grade_contrast')}")
 
     # Decodage + sanitisation des clips sources
     # Force un re-encode propre pour éliminer les artefacts GOP des clips AI
@@ -1402,10 +1516,18 @@ def start():
     for i, src in enumerate(raw_paths):
         out  = f"_cin_{i}.mp4"
         sdur = seg_durs[i]
+        # Rôle basé sur la position : hook(0), punch(last), core(milieu)
+        if n == 1:
+            role = "punch"
+        elif i == 0:
+            role = "hook"
+        elif i == n - 1:
+            role = "punch"
+        else:
+            role = "core"
         print(f"{'─'*55}")
-        print(f"  [Segment {i+1}/{n}  cible={sdur:.2f}s]")
-        seg = build_cinema_segment(src, out, sdur,
-                                   1.0, opts)  # HARDCODE kb_zoom=1.0 — pas de zoom sur clips AI
+        print(f"  [Segment {i+1}/{n}  rôle={role.upper()}  cible={sdur:.2f}s]")
+        seg = build_cinema_segment(src, out, sdur, 1.0, opts, role=role)
         segments.append(seg)
 
     print(f"\n{'─'*55}")
