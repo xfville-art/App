@@ -779,474 +779,206 @@ Réponds UNIQUEMENT en JSON valide, zéro texte avant ou après :
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# STICKER ENGINE  (v4) — Bulles BD calibrées
-# Proportions correctes · Queue vers le personnage · Texte lisible
+# SUBTITLE ENGINE  (v1) — Sous-titres cinéma propres
+# Bande semi-transparente en bas · Texte blanc bold · Jamais gênant
 # ═══════════════════════════════════════════════════════════════════════
-import math as _math
 
-
-def _bd_stroke_text(draw, text, font, x, y, fill, stroke_col, sw=4, anchor="mm"):
-    """Texte BD avec contour multi-directions."""
-    for dx, dy in [(-sw,0),(sw,0),(0,-sw),(0,sw),
-                   (-sw,-sw),(sw,-sw),(-sw,sw),(sw,sw)]:
-        draw.text((x+dx, y+dy), text, fill=stroke_col, font=font, anchor=anchor)
-    draw.text((x, y), text, fill=fill, font=font, anchor=anchor)
-
-
-def _wrap_text(text, font, max_px):
-    """Découpe le texte en lignes qui tiennent dans max_px."""
-    words = text.upper().split()
-    lines = []
-    cur = ""
-    for w in words:
-        test = (cur + " " + w).strip()
-        try:    tw = font.getlength(test)
-        except: tw = len(test) * 0.6 * font.size
-        if tw > max_px and cur:
-            lines.append(cur)
-            cur = w
-        else:
-            cur = test
-    if cur:
-        lines.append(cur)
-    return lines
-
-
-def _gen_speech_bubble(text, bubble_w, out_path, tail_side="right", style="normal"):
+def subtitle_analysis(segments, opts, vira_result):
     """
-    Génère une bulle de dialogue BD.
-
-    bubble_w  : largeur cible de la bulle en pixels (ex : 240)
-                Le canvas PNG sera légèrement plus grand (queue + marges).
-
-    tail_side : "right" → queue bas-droite (bulle à gauche du personnage)
-                "left"  → queue bas-gauche (bulle à droite du personnage)
-
-    style     : "normal" → blanc, texte noir   (réaction)
-                "shout"  → jaune, texte rouge  (cri)
-                "shock"  → orange dentelé      (choc)
-                "thought"→ blanc nuage, bleu   (pensée)
-    """
-    try:
-        from PIL import Image, ImageDraw, ImageFont
-        import random as _rnd
-    except ImportError:
-        return False
-
-    FONT = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
-
-    # Palette par style
-    if style == "shout":
-        bg_col  = (255, 235, 20, 255)
-        txt_col = (170, 0, 0, 255)
-        sw_out  = max(5, bubble_w // 32)
-    elif style == "shock":
-        bg_col  = (255, 75, 20, 255)
-        txt_col = (255, 255, 255, 255)
-        sw_out  = max(5, bubble_w // 32)
-    elif style == "thought":
-        bg_col  = (235, 245, 255, 250)
-        txt_col = (15, 15, 100, 255)
-        sw_out  = max(4, bubble_w // 40)
-    else:  # normal
-        bg_col  = (255, 255, 255, 252)
-        txt_col = (10, 10, 10, 255)
-        sw_out  = max(5, bubble_w // 32)
-
-    BLACK = (0, 0, 0, 255)
-
-    # Dimensions bulle (ratio ~4:3 horizontal)
-    bub_h  = int(bubble_w * 0.72)
-    tail_h = int(bubble_w * 0.28)  # hauteur queue sous la bulle
-    tail_w = int(bubble_w * 0.22)  # largeur base de la queue
-    brad   = int(bubble_w * 0.22)  # rayon coins arrondis
-
-    # Canvas : bulle + queue + marges pour le contour
-    mg  = sw_out + 4
-    W   = bubble_w + mg * 2
-    H   = bub_h + tail_h + mg * 2
-
-    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    d   = ImageDraw.Draw(img)
-
-    # Coordonnées bulle
-    bx1 = mg
-    by1 = mg
-    bx2 = mg + bubble_w
-    by2 = mg + bub_h
-    bcx = (bx1 + bx2) // 2
-    bcy = (by1 + by2) // 2
-
-    # ── Corps de la bulle ─────────────────────────────────────────────
-    if style == "shock":
-        # Forme dentelée — étoile irrégulière
-        _rnd.seed(hash(text) % 9999)
-        n = 16
-        ro = bubble_w // 2
-        ri = int(ro * 0.76)
-        pts = []
-        for i in range(n * 2):
-            ang = _math.radians(i * 180 / n - 90)
-            r = ro if i % 2 == 0 else ri + _rnd.randint(-int(ri*0.06), int(ri*0.06))
-            pts.append((bcx + r * _math.cos(ang), bcy + r * _math.sin(ang)))
-        # Contour noir
-        pts_s = [(bcx + (r + sw_out * 1.8) * _math.cos(_math.radians(i * 180/n - 90)),
-                  bcy + (r + sw_out * 1.8) * _math.sin(_math.radians(i * 180/n - 90)))
-                 for i, r in [(i, ro if i%2==0 else ri) for i in range(n * 2)]]
-        d.polygon(pts_s, fill=BLACK)
-        d.polygon(pts, fill=bg_col)
-
-    elif style == "thought":
-        # Ellipse principale + bosses régulières
-        d.ellipse([bx1-sw_out, by1-sw_out, bx2+sw_out, by2+sw_out], fill=BLACK)
-        d.ellipse([bx1, by1, bx2, by2], fill=bg_col)
-        n_bumps = 12
-        rx = bubble_w // 2
-        ry = bub_h // 2
-        bump_r = max(8, bubble_w // 18)
-        for i in range(n_bumps):
-            ang = _math.radians(i * 360 / n_bumps)
-            bpx = int(bcx + rx * _math.cos(ang))
-            bpy = int(bcy + ry * _math.sin(ang))
-            d.ellipse([bpx-bump_r-sw_out, bpy-bump_r-sw_out,
-                       bpx+bump_r+sw_out, bpy+bump_r+sw_out], fill=BLACK)
-            d.ellipse([bpx-bump_r, bpy-bump_r,
-                       bpx+bump_r, bpy+bump_r], fill=bg_col)
-    else:
-        # Bulle arrondie standard
-        d.rounded_rectangle([bx1-sw_out, by1-sw_out, bx2+sw_out, by2+sw_out],
-                             radius=brad + sw_out, fill=BLACK)
-        d.rounded_rectangle([bx1, by1, bx2, by2], radius=brad, fill=bg_col)
-
-    # ── Queue pointue ─────────────────────────────────────────────────
-    if style not in ("shock", "thought"):
-        # Base de la queue sur le bord bas de la bulle
-        if tail_side == "right":
-            q_cx = bx2 - int(bubble_w * 0.20)
-            tip  = (bx2 + int(bubble_w * 0.04), by2 + tail_h + mg//2)
-        else:  # left
-            q_cx = bx1 + int(bubble_w * 0.20)
-            tip  = (bx1 - int(bubble_w * 0.04), by2 + tail_h + mg//2)
-
-        q_left  = q_cx - tail_w // 2
-        q_right = q_cx + tail_w // 2
-        tail_pts = [(q_left, by2), (q_right, by2), tip]
-
-        # Contour noir queue
-        d.polygon(tail_pts, fill=BLACK)
-        # Corps queue (rentrant légèrement pour simuler l'épaisseur)
-        sw2 = max(2, sw_out - 1)
-        tail_in = [(q_left + sw2, by2 - sw2//2),
-                   (q_right - sw2, by2 - sw2//2),
-                   tip]
-        d.polygon(tail_in, fill=bg_col)
-
-    elif style == "thought":
-        # Petites bulles qui descendent vers le personnage
-        if tail_side == "right":
-            centers = [(bx2 - int(bubble_w*0.10), by2 + int(tail_h*0.38)),
-                       (bx2 + int(bubble_w*0.01),  by2 + int(tail_h*0.80))]
-        else:
-            centers = [(bx1 + int(bubble_w*0.10), by2 + int(tail_h*0.38)),
-                       (bx1 - int(bubble_w*0.01),  by2 + int(tail_h*0.80))]
-        radii = [max(6, bubble_w//14), max(4, bubble_w//22)]
-        for (cx2, cy2), br in zip(centers, radii):
-            d.ellipse([cx2-br-sw_out, cy2-br-sw_out, cx2+br+sw_out, cy2+br+sw_out], fill=BLACK)
-            d.ellipse([cx2-br, cy2-br, cx2+br, cy2+br], fill=bg_col)
-
-    # ── Texte ──────────────────────────────────────────────────────────
-    # Police — taille de départ 28% de bubble_w, réduction si besoin
-    usable_w = int(bubble_w * (0.70 if style == 'thought' else 0.80))
-    usable_h = int(bub_h    * (0.68 if style == 'thought' else 0.76))
-    # thought a moins d'espace utile (bosses) → police légèrement plus grande
-    font_sz  = max(22, int(bubble_w * (0.30 if style == 'thought' else 0.28)))
-
-    for _ in range(6):
-        try:    fnt = ImageFont.truetype(FONT, font_sz)
-        except: fnt = ImageFont.load_default(); break
-        lines  = _wrap_text(text, fnt, usable_w)
-        lh     = int(font_sz * 1.22)
-        tot_h  = len(lines) * lh
-        if tot_h <= usable_h:
-            break
-        font_sz = int(font_sz * 0.84)
-
-    sw_txt = max(3, font_sz // 10)
-    lh     = int(font_sz * 1.22)
-    n_lines = len(lines)
-    start_y = bcy - (n_lines - 1) * lh // 2
-
-    for li, line in enumerate(lines):
-        ly = start_y + li * lh
-        _bd_stroke_text(d, line, fnt, bcx, ly, txt_col, BLACK, sw=sw_txt)
-
-    img.save(out_path)
-    return True
-
-
-def _sticker_overlay_filter(stickers, video_w, video_h):
-    """Filter FFmpeg pour overlay des bulles BD avec fade."""
-    if not stickers:
-        return [], "", 0
-
-    input_args   = []
-    filter_parts = []
-    prev_label   = "0:v"
-    nb_ok        = 0
-
-    for idx, s in enumerate(stickers):
-        img_path = f"_sticker_{idx}.png"
-
-        text  = s.get("text",    "!")
-        style = s.get("style",   "normal")
-        tail  = s.get("tail",    "right")
-        # bubble_w = largeur de la bulle en pixels (pas size du canvas)
-        bw    = s.get("bubble_w", int(video_w * 0.34))
-        x_pct = s.get("x_pct",  0.78)
-        y_pct = s.get("y_pct",  0.18)
-        t0    = float(s.get("t_start", 0.8))
-        tdur  = float(s.get("t_dur",   2.0))
-
-        ok = _gen_speech_bubble(text, bw, img_path, tail_side=tail, style=style)
-        if not ok:
-            continue
-
-        # Taille réelle du PNG (bulle + queue + marges)
-        try:
-            from PIL import Image as _PI
-            _im = _PI.open(img_path)
-            png_w, png_h = _im.size
-            _im.close()
-        except Exception:
-            png_w = int(bw * 1.15)
-            png_h = int(bw * 1.05)
-
-        # Position : coin de la vidéo, au-dessus du personnage
-        # La queue pointe vers le bas → bulle au-dessus
-        lb = 58   # hauteur letterbox
-        px = int(video_w  * x_pct - png_w / 2)
-        py = int(video_h  * y_pct - png_h / 2)
-        # Clamp strict
-        px = max(4,      min(px, video_w  - png_w - 4))
-        py = max(lb + 4, min(py, video_h  - lb - png_h - 4))
-
-        t_end   = t0 + tdur
-        fade_in = min(0.12, tdur * 0.10)
-        fade_out= min(0.15, tdur * 0.12)
-        hold    = max(0.05, tdur - fade_in - fade_out)
-        enable  = f"between(t,{t0:.3f},{t_end:.3f})"
-
-        vf_stk = (
-            f"[{idx+1}:v]"
-            f"format=rgba,"
-            f"loop=loop=-1:size=1,"
-            f"trim=start=0:end={tdur:.3f},"
-            f"fade=t=in:st=0:d={fade_in:.3f}:alpha=1,"
-            f"fade=t=out:st={fade_in+hold:.3f}:d={fade_out:.3f}:alpha=1,"
-            f"setpts=PTS+{t0:.3f}/TB"
-            f"[s{idx}]"
-        )
-        ovl = (
-            f"[{prev_label}][s{idx}]"
-            f"overlay=x={px}:y={py}:format=auto:enable='{enable}'"
-            f"[v{idx}]"
-        )
-        filter_parts.append(vf_stk)
-        filter_parts.append(ovl)
-        prev_label = f"v{idx}"
-        input_args.extend(["-i", img_path])
-        nb_ok += 1
-
-    if not filter_parts:
-        return [], "", 0
-
-    last_label = f"[v{nb_ok-1}]"
-    chain      = ";".join(filter_parts)
-    last_idx   = chain.rfind(last_label)
-    final_filter = (chain[:last_idx] + "[vout]" + chain[last_idx+len(last_label):]
-                    if last_idx != -1 else chain)
-    return input_args, final_filter, nb_ok
-
-
-def sticker_analysis(segments, opts, vira_result):
-    """
-    Génère 2-3 bulles BD contextuelles via GitHub Models.
-    Proportions calibrées : bubble_w_pct 0.30-0.40 de la largeur vidéo.
+    Génère 2-3 sous-titres courts via GitHub Models.
+    Chaque sous-titre commente l'action visible au bon moment.
+    Retourne une liste de dicts : {text, t_start, t_dur}
     """
     api_key = os.environ.get("GITHUB_TOKEN", "")
 
-    if not opts.get("stickers", True):
-        print("  [Stickers] Désactivés")
+    if not opts.get("stickers", True):   # réutilise le flag "stickers" pour activer/désactiver
+        print("  [Subtitles] Désactivés par config")
         return []
-
-    W, H = cfg(opts, "resolution").split("x")
-    W_px = int(W)
-    H_px = int(H)
 
     content_dur = sum(s["dur"] for s in segments)
 
-    # Description segments avec timecodes et rôle
+    # Description segments
     t_cur = 0.0
     segs_lines = []
     for i, s in enumerate(segments):
         role = "hook" if i == 0 else ("punch" if i == len(segments)-1 else "core")
         segs_lines.append(
-            f"  Seg{i+1} [{role.upper()}]: "
-            f"t={t_cur:.1f}s→{t_cur+s['dur']:.1f}s  dur={s['dur']:.1f}s"
+            f"  Seg{i+1} [{role.upper()}]: t={t_cur:.1f}s→{t_cur+s['dur']:.1f}s  dur={s['dur']:.1f}s"
         )
         t_cur += s["dur"]
     segs_desc = "\n".join(segs_lines)
 
     if not api_key:
-        print("  [Stickers] Pas de token — défaut")
-        return _default_stickers(W_px, content_dur, segments)
+        print("  [Subtitles] Pas de token — sous-titres par défaut")
+        return _default_subtitles(content_dur, segments)
 
     prompt = (
-        f"Tu es directeur artistique BD Les Crados (Garbage Pail Kids français, humour absurde/gore).\n"
-        f"Vidéo TikTok 9:16 = {content_dur:.1f}s. Personnage grotesque sur carte collector animée.\n\n"
+        f"Tu es scénariste pour Les Crados (Garbage Pail Kids français).\n"
+        f"Vidéo TikTok 9:16 = {content_dur:.1f}s. Carte collector animée, personnage grotesque.\n\n"
         f"SEGMENTS :\n{segs_desc}\n\n"
-        f"Place exactement 2 bulles de dialogue BD. Règles STRICTES :\n\n"
-        f"TEXTE : onomatopée ou réaction courte liée à l'ACTION du segment.\n"
-        f"  hook   → l'action commence, personnage réagit. Ex: 'AÏÏE!', 'HÉ!', 'OUÏE!'\n"
-        f"  core   → action en cours. Ex: 'AU SECOURS!', 'LÂCHEZ!', 'GNARK!'\n"
-        f"  punch  → climax/révélation. Ex: 'BEURK!', 'NON!', 'ENCORE?!'\n"
-        f"  MAX 8 CARACTÈRES ESPACES INCLUS. Tout en majuscules.\n\n"
-        f"STYLE (choisir selon intensité) :\n"
-        f"  normal  → blanc, réaction calme\n"
-        f"  shout   → JAUNE, cri fort\n"
-        f"  shock   → ORANGE dentelé, choc extrême\n"
-        f"  thought → nuage blanc-bleu, pensée intérieure\n\n"
-        f"PLACEMENT (TRÈS IMPORTANT — proportions réelles 720x1280px) :\n"
-        f"  bubble_w_pct : 0.32 à 0.38 (largeur bulle / largeur vidéo)\n"
-        f"    → 0.32 × 720 = 230px — lisible sans couvrir le visage\n"
-        f"  x_pct : coin DROIT = 0.82 (tail='right') | coin GAUCHE = 0.18 (tail='left')\n"
-        f"  y_pct : 0.14 à 0.28 — bulle flotte AU-DESSUS du personnage\n"
-        f"  t_dur : 1.5 à 2.2s — durée courte, impact immédiat\n"
-        f"  IMPORTANT : les 2 bulles NE DOIVENT PAS se chevaucher dans le temps\n\n"
-        f"JSON UNIQUEMENT, rien d'autre :\n"
-        f'{"{"}"stickers": [{{'
-        f'"text":"<MAX 8 CHARS>",'
-        f'"style":"<normal|shout|shock|thought>",'
-        f'"tail":"<right|left>",'
-        f'"bubble_w_pct":<float 0.32-0.38>,'
-        f'"x_pct":<float>,'
-        f'"y_pct":<float 0.14-0.28>,'
-        f'"t_start":<float>,'
-        f'"t_dur":<float 1.5-2.2>'
-        f'}}]{"}"}'
+        f"Écris EXACTEMENT 2 sous-titres courts qui apparaissent en bas de la vidéo.\n"
+        f"Les sous-titres commentent l'action de manière absurde/drôle style Les Crados.\n\n"
+        f"RÈGLES STRICTES :\n"
+        f"- MAX 25 caractères par sous-titre\n"
+        f"- Ton absurde/sarcastique/dégoûtant — style carte collector\n"
+        f"- Le 1er sous-titre : pendant le hook (début)\n"
+        f"- Le 2ème sous-titre : pendant la punchline (fin)\n"
+        f"- t_dur : entre 1.8s et 2.5s\n"
+        f"- Les 2 sous-titres NE SE CHEVAUCHENT PAS\n"
+        f"- Exemples : 'Magnétique et douloureux...', 'Ça fait MAL !', "
+        f"'Collection complète !', 'Appelle un médecin !', 'Résistance nulle.'\n\n"
+        f"JSON UNIQUEMENT :\n"
+        f'{"{"}"subtitles": [{{"text":"<MAX 25 CHARS>","t_start":<float>,"t_dur":<float 1.8-2.5>}}]{"}"}'
     )
 
-    print("  [Stickers] Appel LLM pour bulles BD…")
+    print("  [Subtitles] Génération LLM…")
     try:
         raw  = _call_github_models(api_key, prompt)
         data = _extract_json(raw)
-        raw_list = data.get("stickers", [])
+        raw_list = data.get("subtitles", [])
         if not raw_list:
             raise ValueError("Liste vide")
     except Exception as e:
-        print(f"  [Stickers] LLM erreur : {e} — défaut")
-        return _default_stickers(W_px, content_dur, segments)
+        print(f"  [Subtitles] LLM erreur : {e} — défaut")
+        return _default_subtitles(content_dur, segments)
 
-    stickers = []
-    last_end = -99.0
+    subtitles = []
+    last_end  = -99.0
     for s in raw_list[:3]:
-        # Clamp bubble_w entre 28% et 42% de la vidéo
-        bw_pct = float(s.get("bubble_w_pct", 0.34))
-        bw_pct = max(0.28, min(bw_pct, 0.42))
-        bw     = int(W_px * bw_pct)
-
+        txt  = str(s.get("text", "")).strip()[:28]
+        if not txt:
+            continue
         t0   = float(s.get("t_start", 0.5))
-        tdur = float(s.get("t_dur",   1.8))
-        # Pas de chevauchement : décaler si nécessaire
-        if t0 < last_end + 0.3:
-            t0 = last_end + 0.3
-        t0   = max(0.2, min(t0, max(0.2, content_dur - 1.5)))
+        tdur = float(s.get("t_dur",   2.0))
+        # Anti-chevauchement
+        if t0 < last_end + 0.25:
+            t0 = last_end + 0.25
+        t0   = max(0.1, min(t0, max(0.1, content_dur - 1.5)))
         tdur = max(1.0, min(tdur, content_dur - t0))
         last_end = t0 + tdur
+        subtitles.append({"text": txt, "t_start": round(t0, 2), "t_dur": round(tdur, 2)})
+        print(f'    📝 "{txt}"  @{t0:.1f}s → {t0+tdur:.1f}s')
 
-        # Texte : truncate à 10 chars sécurité
-        txt = str(s.get("text", "!")).upper()[:10].strip()
-        if not txt:
-            txt = "AÏÏE!"
-
-        stickers.append({
-            "text":     txt,
-            "style":    s.get("style",  "normal"),
-            "tail":     s.get("tail",   "right"),
-            "bubble_w": bw,
-            "x_pct":    float(s.get("x_pct",  0.82)),
-            "y_pct":    float(s.get("y_pct",  0.18)),
-            "t_start":  round(t0, 2),
-            "t_dur":    round(tdur, 2),
-        })
-        print(f'    💬 "{txt}" [{stickers[-1]["style"]}] '
-              f'bw={bw}px @{t0:.1f}s/{tdur:.1f}s '
-              f'pos=({stickers[-1]["x_pct"]:.2f},{stickers[-1]["y_pct"]:.2f})')
-
-    return stickers
+    return subtitles
 
 
-def _default_stickers(W_px, content_dur, segments=None):
-    """Bulles BD par défaut calibrées."""
-    if content_dur < 1.5:
-        return []
-    bw = int(W_px * 0.34)
-    n  = len(segments) if segments else 1
-    out = [{"text": "AÏÏE!", "style": "shout",  "tail": "right",
-             "bubble_w": bw, "x_pct": 0.82, "y_pct": 0.16,
-             "t_start": min(0.4, content_dur * 0.08), "t_dur": 1.8}]
+def _default_subtitles(content_dur, segments=None):
+    """Sous-titres par défaut."""
+    n = len(segments) if segments else 1
+    subs = [{"text": "Ça fait vraiment mal...", "t_start": 0.4, "t_dur": 2.0}]
     if content_dur > 3.5 and n >= 2:
-        out.append({"text": "BEURK!", "style": "shock", "tail": "left",
-                    "bubble_w": bw, "x_pct": 0.18, "y_pct": 0.20,
-                    "t_start": round(content_dur * 0.55, 1), "t_dur": 1.6})
-    print(f"  [Stickers] {len(out)} bulle(s) par défaut")
-    return out
+        subs.append({"text": "Collection complète !",
+                     "t_start": round(content_dur * 0.58, 1), "t_dur": 1.8})
+    print(f"  [Subtitles] {len(subs)} sous-titre(s) par défaut")
+    return subs
 
 
-def apply_stickers(input_video, output_video, stickers, opts):
-    """Applique les bulles BD via FFmpeg overlay."""
-    if not stickers:
+def apply_subtitles(input_video, output_video, subtitles, opts):
+    """
+    Incrust les sous-titres via FFmpeg drawtext.
+    Style : fond noir semi-transparent · texte blanc bold · centré bas.
+    Chaque sous-titre = drawtext avec enable='between(t,start,end)'.
+    """
+    if not subtitles:
         run(f'cp "{input_video}" "{output_video}"')
         return
 
     W_str, H_str = cfg(opts, "resolution").split("x")
-    crf = cfg(opts, "crf")
+    W_px  = int(W_str)
+    H_px  = int(H_str)
+    fps   = cfg(opts, "fps")
+    crf   = cfg(opts, "crf")
+    lb_h  = cfg(opts, "cinema_lb_h")   # hauteur letterbox (55-80px)
 
-    # Valider et corriger les timecodes
+    # Taille police : 4.2% de la hauteur vidéo — grand et lisible
+    font_size = max(36, int(H_px * 0.042))
+
+    # Zone sous-titre : juste au-dessus de la letterbox basse
+    # y centré dans la zone : letterbox_bas → letterbox_bas + zone_h
+    zone_h   = int(H_px * 0.095)            # hauteur zone sous-titre ~9% H
+    band_y   = H_px - lb_h - zone_h         # y haut de la bande
+    text_y   = band_y + zone_h // 2         # y centre texte
+
     try:
-        vid_dur  = duration(input_video)
-        stickers = [s for s in stickers if s.get("t_start", 0) < vid_dur - 0.5]
-        for s in stickers:
-            s["t_start"] = max(0.1, min(float(s["t_start"]), vid_dur - 1.0))
-            s["t_dur"]   = max(0.5, min(float(s.get("t_dur", 1.8)), vid_dur - s["t_start"]))
-        if not stickers:
-            run(f'cp "{input_video}" "{output_video}"')
-            return
+        vid_dur = duration(input_video)
+        subtitles = [s for s in subtitles if s.get("t_start", 0) < vid_dur - 0.3]
+        for s in subtitles:
+            s["t_start"] = max(0.1, min(float(s["t_start"]), vid_dur - 0.5))
+            s["t_dur"]   = max(0.5, min(float(s.get("t_dur", 2.0)), vid_dur - s["t_start"]))
     except Exception:
         pass
 
-    input_args, filter_str, nb = _sticker_overlay_filter(
-        stickers, int(W_str), int(H_str)
-    )
-    if not filter_str:
+    if not subtitles:
         run(f'cp "{input_video}" "{output_video}"')
         return
 
-    cmd = (
-        "ffmpeg -y"
-        + f' -i "{input_video}"'
-        + " " + " ".join(input_args)
-        + f' -filter_complex "{filter_str}"'
-        + f' -map "[vout]" -map "0:a:0"'
-        + f' -c:v libx264 -crf {crf} -pix_fmt yuv420p -c:a aac -ar 44100'
-        + f' "{output_video}"'
+    # Construire les filtres drawtext + drawbox pour chaque sous-titre
+    # drawbox = bande noire semi-transparente derrière le texte
+    vf_parts = []
+
+    for s in subtitles:
+        t0   = s["t_start"]
+        tend = t0 + s["t_dur"]
+        # Échapper le texte pour FFmpeg drawtext
+        txt  = (s["text"]
+                .replace("'",  "\\'")
+                .replace(":",  "\\:")
+                .replace(",",  "\\,")
+                .replace("[",  "\\[")
+                .replace("]",  "\\]"))
+
+        # Bande semi-transparente (drawbox)
+        vf_parts.append(
+            f"drawbox="
+            f"x=0:y={band_y}:w={W_px}:h={zone_h}:"
+            f"color=black@0.62:t=fill:"
+            f"enable='between(t,{t0:.3f},{tend:.3f})'"
+        )
+        # Texte principal blanc — centré
+        vf_parts.append(
+            f"drawtext="
+            f"fontfile={FONT}:"
+            f"text='{txt}':"
+            f"fontsize={font_size}:"
+            f"fontcolor=white:"
+            f"x=(w-text_w)/2:"
+            f"y={text_y}-(text_h/2):"
+            f"enable='between(t,{t0:.3f},{tend:.3f})'"
+        )
+        # Ombre portée (légèrement décalée, noir semi-transparent)
+        vf_parts.append(
+            f"drawtext="
+            f"fontfile={FONT}:"
+            f"text='{txt}':"
+            f"fontsize={font_size}:"
+            f"fontcolor=black@0.55:"
+            f"x=(w-text_w)/2+2:"
+            f"y={text_y}-(text_h/2)+2:"
+            f"enable='between(t,{t0:.3f},{tend:.3f})'"
+        )
+        # Contour — même texte en noir pur, décalé 4 directions
+        for dx, dy in [(-2,0),(2,0),(0,-2),(0,2)]:
+            vf_parts.append(
+                f"drawtext="
+                f"fontfile={FONT}:"
+                f"text='{txt}':"
+                f"fontsize={font_size}:"
+                f"fontcolor=black@0.80:"
+                f"x=(w-text_w)/2+{dx}:"
+                f"y={text_y}-(text_h/2)+{dy}:"
+                f"enable='between(t,{t0:.3f},{tend:.3f})'"
+            )
+
+    vf = ",".join(vf_parts)
+
+    run(
+        f'ffmpeg -y -i "{input_video}" '
+        f'-vf "{vf}" '
+        f'-c:v libx264 -crf {crf} -pix_fmt yuv420p '
+        f'-c:a copy '
+        f'"{output_video}"'
     )
-    try:
-        run(cmd)
-        print(f"  [Stickers] {nb} bulle(s) BD appliquée(s) ✅")
-    except Exception as e:
-        print(f"  [Stickers] ERREUR : {e}")
-        run(f'cp "{input_video}" "{output_video}"')
+    print(f"  [Subtitles] {len(subtitles)} sous-titre(s) appliqué(s) ✅")
 
 
 
@@ -1465,14 +1197,14 @@ def start():
     print("\n  [Overlay cinema + Logo splash]")
     build_cinema_overlay_no_text(opts)
 
-    # ── Stickers intelligents ───────────────────────────────────────
-    print("\n  [Stickers IA]")
-    stickers = sticker_analysis(segments, opts, vira_result)
-    if stickers:
-        run('mv output.mp4 _presticker.mp4')
-        apply_stickers("_presticker.mp4", "output.mp4", stickers, opts)
+    # ── Sous-titres ────────────────────────────────────────────────
+    print("\n  [Sous-titres]")
+    subtitles = subtitle_analysis(segments, opts, vira_result)
+    if subtitles:
+        run('mv output.mp4 _presub.mp4')
+        apply_subtitles("_presub.mp4", "output.mp4", subtitles, opts)
     else:
-        print("  [Stickers] Aucun sticker appliqué")
+        print("  [Subtitles] Aucun sous-titre")
 
     size = os.path.getsize("output.mp4") / 1024 / 1024
     print(f"\n{'='*60}")
