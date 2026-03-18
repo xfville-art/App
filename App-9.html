@@ -3,10 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>ViraCut · LesCrados.Ai · v9</title>
-<style>
-/* Google Fonts — chargement non-bloquant, fallback système si content:// */
+<title>ViraCut · LesCrados.Ai</title>
 
+<style>
 :root{
   --bg:#0a0a0f;
   --bg2:#111118;
@@ -32,7 +31,7 @@
   --sh:0 2px 20px rgba(0,0,0,.5);
   --sh2:0 1px 6px rgba(0,0,0,.3);
   --fn:'DM Sans','SF Pro Text','Segoe UI',system-ui,sans-serif;
-  --fh:'Syne','SF Pro Display','Segoe UI',system-ui,sans-serif;
+  --fh:'Syne','SF Pro Display','Segoe UI Black',system-ui,sans-serif;
   --safe-top:env(safe-area-inset-top,0px);
   --safe-bot:env(safe-area-inset-bottom,0px);
 }
@@ -559,256 +558,83 @@ input[type=password]::placeholder{color:var(--t3)}
 /* ─── SCROLLBAR ─── */
 ::-webkit-scrollbar{width:0;height:0}
 
-/* ═══════════════════════════════════════════
-   STORYBOARD PREVIEW  (App-9)
-   ═══════════════════════════════════════════ */
-
-/* ── Storyboard card (in tab0, below mode selector) ── */
-#storyboardCard{
-  display:none;
-  background:var(--bg2);border-radius:var(--r);
-  border:1px solid var(--sep);margin-bottom:12px;
-  overflow:hidden;
-  animation:sb-appear .35s cubic-bezier(.16,1,.3,1);
-}
-@keyframes sb-appear{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-
-.sb-head{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:13px 16px 11px;
-  border-bottom:1px solid var(--sep2);
-}
-.sb-head-left{display:flex;align-items:center;gap:9px}
-.sb-badge{
-  width:28px;height:28px;border-radius:8px;
-  background:linear-gradient(135deg,var(--red),var(--blue));
-  display:flex;align-items:center;justify-content:center;
-  font-size:14px;flex-shrink:0;
-}
-.sb-title{font-family:var(--fh);font-size:13px;font-weight:800;letter-spacing:-.1px}
+/* ═══ STORYBOARD PREVIEW ═══ */
+#storyboardCard{display:none;background:var(--bg2);border-radius:var(--r);border:1px solid var(--sep);margin-bottom:12px;overflow:hidden;animation:sb-in .3s cubic-bezier(.16,1,.3,1)}
+@keyframes sb-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.sb-head{display:flex;align-items:center;justify-content:space-between;padding:13px 16px 11px;border-bottom:1px solid var(--sep2)}
+.sb-badge{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,var(--red),var(--blue));display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.sb-title{font-family:var(--fh);font-size:13px;font-weight:800}
 .sb-sub{font-size:11px;color:var(--t3);margin-top:1px}
-.sb-edit-btn{
-  font-size:12px;font-weight:600;color:var(--blue);
-  background:none;border:none;cursor:pointer;padding:4px 8px;
-  border-radius:8px;transition:all .15s;
-}
-.sb-edit-btn:active{background:var(--blue2)}
-
-/* ── Timeline horizontal scroll ── */
-.sb-timeline{
-  display:flex;gap:0;
-  overflow-x:auto;
-  padding:14px 14px 10px;
-  scroll-snap-type:x mandatory;
-  -webkit-overflow-scrolling:touch;
-  position:relative;
-}
-.sb-timeline::-webkit-scrollbar{height:3px}
-.sb-timeline::-webkit-scrollbar-track{background:var(--bg4);border-radius:3px}
-.sb-timeline::-webkit-scrollbar-thumb{background:var(--sep);border-radius:3px}
-
-/* ── Connector line between clips ── */
-.sb-connector{
-  width:24px;flex-shrink:0;
-  display:flex;align-items:center;justify-content:center;
-  position:relative;
-}
-.sb-connector::before{
-  content:'';
-  position:absolute;top:50%;left:0;right:0;height:1.5px;
-  background:linear-gradient(90deg,var(--sep),var(--sep2));
-  transform:translateY(-50%) translateY(-18px);
-}
-.sb-connector-arrow{
-  font-size:9px;color:var(--t3);
-  margin-top:-36px;
-  z-index:1;position:relative;
-}
-
-/* ── Individual clip frame ── */
-.sb-frame{
-  flex-shrink:0;
-  width:76px;
-  scroll-snap-align:start;
-  display:flex;flex-direction:column;align-items:center;gap:6px;
-  cursor:pointer;
-  transition:transform .18s cubic-bezier(.34,1.56,.64,1);
-  position:relative;
-}
-.sb-frame:active{transform:scale(.93)}
-
-/* 9:16 thumbnail */
-.sb-thumb-wrap{
-  width:76px;height:135px;
-  border-radius:10px;overflow:hidden;
-  position:relative;
-  border:2px solid var(--sep);
-  transition:border-color .2s,box-shadow .2s;
-  background:var(--bg4);
-  flex-shrink:0;
-}
-.sb-frame.role-hook .sb-thumb-wrap{border-color:var(--red);box-shadow:0 0 12px rgba(255,59,92,.25)}
-.sb-frame.role-core .sb-thumb-wrap{border-color:var(--cyan);box-shadow:0 0 12px rgba(0,212,255,.18)}
-.sb-frame.role-punch .sb-thumb-wrap{border-color:var(--blue);box-shadow:0 0 12px rgba(108,99,255,.3)}
-.sb-frame.role-auto .sb-thumb-wrap{border-color:var(--gold)}
-
-.sb-thumb-canvas{width:100%;height:100%;display:block;object-fit:cover}
-
-/* Role ribbon at top of thumb */
-.sb-role-ribbon{
-  position:absolute;top:0;left:0;right:0;
-  padding:5px 6px 4px;
-  font-family:var(--fh);font-size:8px;font-weight:800;letter-spacing:.8px;
-  text-align:center;text-transform:uppercase;
-}
-.sb-frame.role-hook .sb-role-ribbon{background:linear-gradient(180deg,rgba(255,59,92,.9),transparent);color:#fff}
-.sb-frame.role-core .sb-role-ribbon{background:linear-gradient(180deg,rgba(0,212,255,.8),transparent);color:#fff}
-.sb-frame.role-punch .sb-role-ribbon{background:linear-gradient(180deg,rgba(108,99,255,.9),transparent);color:#fff}
-.sb-frame.role-auto .sb-role-ribbon{background:linear-gradient(180deg,rgba(245,200,66,.8),transparent);color:#000}
-
-/* Clip number bubble */
-.sb-clip-num{
-  position:absolute;bottom:5px;left:5px;
-  width:16px;height:16px;border-radius:50%;
-  background:rgba(0,0,0,.7);
-  font-size:8px;font-weight:800;color:#fff;
-  display:flex;align-items:center;justify-content:center;
-}
-
-/* Effects overlay badges on thumb */
-.sb-effects{
-  position:absolute;bottom:5px;right:5px;
-  display:flex;flex-direction:column;gap:2px;align-items:flex-end;
-}
-.sb-fx-badge{
-  font-size:7px;font-weight:700;
-  background:rgba(0,0,0,.75);color:#fff;
-  padding:1px 4px;border-radius:3px;letter-spacing:.3px;
-}
-.sb-fx-badge.zoom{color:var(--gold)}
-.sb-fx-badge.sub{color:var(--cyan)}
-.sb-fx-badge.smart{color:var(--green)}
-
-/* Duration bar at bottom of thumb */
-.sb-dur-bar{
-  position:absolute;bottom:0;left:0;right:0;height:3px;
-  background:rgba(255,255,255,.1);
-}
-.sb-dur-fill{
-  height:100%;
-  transition:width .4s cubic-bezier(.16,1,.3,1);
-}
-.sb-frame.role-hook .sb-dur-fill{background:var(--red)}
-.sb-frame.role-core .sb-dur-fill{background:var(--cyan)}
-.sb-frame.role-punch .sb-dur-fill{background:var(--blue)}
-.sb-frame.role-auto .sb-dur-fill{background:var(--gold)}
-
-/* Clip name + duration below thumb */
-.sb-clip-label{
-  font-size:9px;font-weight:600;color:var(--t3);
-  text-align:center;white-space:nowrap;overflow:hidden;
-  text-overflow:ellipsis;width:100%;max-width:80px;
-  line-height:1.3;
-}
-.sb-clip-dur{
-  font-family:var(--fh);font-size:11px;font-weight:800;
-  color:var(--t2);text-align:center;
-}
-
-/* ── Total duration bar ── */
-.sb-total-bar{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:8px 16px 12px;
-  gap:12px;
-}
-.sb-total-label{font-size:11px;color:var(--t3);font-weight:600;letter-spacing:.3px;text-transform:uppercase;flex-shrink:0}
-.sb-total-track{
-  flex:1;height:4px;background:var(--bg4);border-radius:4px;overflow:hidden;
-}
-.sb-total-fill{
-  height:100%;border-radius:4px;
-  background:linear-gradient(90deg,var(--red),var(--blue));
-  transition:width .5s cubic-bezier(.16,1,.3,1);
-}
-.sb-total-dur{
-  font-family:var(--fh);font-size:12px;font-weight:800;
-  color:var(--t1);flex-shrink:0;min-width:34px;text-align:right;
-}
-
-/* ── Logo splash indicator ── */
-.sb-logo-pill{
-  flex-shrink:0;
-  display:flex;flex-direction:column;align-items:center;gap:6px;
-}
-.sb-logo-box{
-  width:36px;height:64px;
-  border-radius:7px;
-  background:linear-gradient(160deg,#1a0005,#0a0010);
-  border:1.5px solid rgba(255,36,66,.4);
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:1px;
-  box-shadow:0 0 10px rgba(255,36,66,.15);
-  flex-shrink:0;
-}
-.sb-logo-text{font-family:var(--fh);font-size:5px;font-weight:800;color:rgba(255,255,255,.9);letter-spacing:.3px;line-height:1.15}
-.sb-logo-text.crados{font-size:8px;color:#fff}
-.sb-logo-text.ai{color:#FF2442;font-size:6px}
-.sb-logo-line{width:28px;height:1px;background:#FF2442;opacity:.7;margin:1px 0}
+.sb-edit{font-size:12px;font-weight:600;color:var(--blue);background:none;border:none;cursor:pointer;padding:4px 8px;border-radius:8px}
+.sb-tl{display:flex;gap:0;overflow-x:auto;padding:14px 14px 10px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch}
+.sb-tl::-webkit-scrollbar{height:3px}
+.sb-tl::-webkit-scrollbar-track{background:var(--bg4);border-radius:3px}
+.sb-tl::-webkit-scrollbar-thumb{background:var(--sep);border-radius:3px}
+.sb-conn{width:20px;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding-bottom:36px}
+.sb-conn-arr{font-size:9px;color:var(--t3)}
+.sb-frame{flex-shrink:0;width:76px;scroll-snap-align:start;display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer;transition:transform .15s}
+.sb-frame:active{transform:scale(.92)}
+.sb-tw{width:76px;height:135px;border-radius:10px;overflow:hidden;position:relative;border:2px solid var(--sep);background:var(--bg4);transition:border-color .2s,box-shadow .2s}
+.sb-frame.rh .sb-tw{border-color:var(--red);box-shadow:0 0 10px rgba(255,59,92,.25)}
+.sb-frame.rc .sb-tw{border-color:var(--cyan);box-shadow:0 0 10px rgba(0,212,255,.18)}
+.sb-frame.rp .sb-tw{border-color:var(--blue);box-shadow:0 0 10px rgba(108,99,255,.28)}
+.sb-frame.ra .sb-tw{border-color:var(--gold)}
+.sb-cv{width:100%;height:100%;display:block;object-fit:cover}
+.sb-ribbon{position:absolute;top:0;left:0;right:0;padding:4px 6px 3px;font-family:var(--fh);font-size:8px;font-weight:800;letter-spacing:.8px;text-align:center}
+.sb-frame.rh .sb-ribbon{background:linear-gradient(180deg,rgba(255,59,92,.88),transparent);color:#fff}
+.sb-frame.rc .sb-ribbon{background:linear-gradient(180deg,rgba(0,212,255,.8),transparent);color:#fff}
+.sb-frame.rp .sb-ribbon{background:linear-gradient(180deg,rgba(108,99,255,.88),transparent);color:#fff}
+.sb-frame.ra .sb-ribbon{background:linear-gradient(180deg,rgba(245,200,66,.8),transparent);color:#000}
+.sb-num{position:absolute;bottom:5px;left:5px;width:15px;height:15px;border-radius:50%;background:rgba(0,0,0,.72);font-size:8px;font-weight:800;color:#fff;display:flex;align-items:center;justify-content:center}
+.sb-fx{position:absolute;bottom:5px;right:4px;display:flex;flex-direction:column;gap:2px;align-items:flex-end}
+.sb-fx span{font-size:7px;font-weight:700;background:rgba(0,0,0,.75);padding:1px 3px;border-radius:3px;color:var(--gold)}
+.sb-db{position:absolute;bottom:0;left:0;right:0;height:3px;background:rgba(255,255,255,.08)}
+.sb-df{height:100%;transition:width .5s cubic-bezier(.16,1,.3,1)}
+.sb-frame.rh .sb-df{background:var(--red)}
+.sb-frame.rc .sb-df{background:var(--cyan)}
+.sb-frame.rp .sb-df{background:var(--blue)}
+.sb-frame.ra .sb-df{background:var(--gold)}
+.sb-dur{font-family:var(--fh);font-size:11px;font-weight:800;color:var(--t2);text-align:center}
+.sb-lbl{font-size:9px;font-weight:600;color:var(--t3);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:76px}
+.sb-logo-pill{flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:5px}
+.sb-logo-box{width:36px;height:64px;border-radius:7px;background:linear-gradient(160deg,#1a0005,#0a0010);border:1.5px solid rgba(255,36,66,.4);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;box-shadow:0 0 8px rgba(255,36,66,.15)}
+.sb-lt{font-family:var(--fh);font-size:5px;font-weight:800;color:rgba(255,255,255,.9);letter-spacing:.3px;line-height:1.2}
+.sb-lt.cr{font-size:8px;color:#fff}
+.sb-lt.ai{color:#FF2442;font-size:6px}
+.sb-ll{width:28px;height:1px;background:#FF2442;opacity:.7;margin:1px 0}
 .sb-logo-dur{font-family:var(--fh);font-size:11px;font-weight:800;color:var(--t3);text-align:center}
 .sb-logo-lbl{font-size:9px;font-weight:600;color:var(--t3);text-align:center}
-
-/* ── Clip detail bottom sheet ── */
-#sbDetail{
-  display:none;
-  position:fixed;inset:0;z-index:200;
-  align-items:flex-end;justify-content:center;
-}
-#sbDetail.open{display:flex}
-.sb-detail-scrim{
-  position:absolute;inset:0;background:rgba(0,0,0,.6);
-  backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
-}
-.sb-detail-sheet{
-  position:relative;z-index:1;
-  width:100%;max-width:430px;
-  background:var(--bg2);
-  border-radius:24px 24px 0 0;
-  border:1px solid var(--sep);
-  padding:0 0 calc(var(--safe-bot)+20px);
-  animation:sheet-up .3s cubic-bezier(.16,1,.3,1);
-  max-height:72vh;overflow-y:auto;
-}
+.sb-totbar{display:flex;align-items:center;justify-content:space-between;padding:8px 16px 12px;gap:10px}
+.sb-totlbl{font-size:10px;color:var(--t3);font-weight:600;letter-spacing:.3px;text-transform:uppercase;flex-shrink:0}
+.sb-tottrack{flex:1;height:4px;background:var(--bg4);border-radius:4px;overflow:hidden}
+.sb-totfill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--red),var(--blue));transition:width .5s cubic-bezier(.16,1,.3,1)}
+.sb-totdur{font-family:var(--fh);font-size:12px;font-weight:800;color:var(--t1);flex-shrink:0;min-width:32px;text-align:right}
+/* Detail sheet */
+#sbSheet{display:none;position:fixed;inset:0;z-index:200;align-items:flex-end}
+#sbSheet.open{display:flex}
+.sb-scrim{position:absolute;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+.sb-sheet{position:relative;z-index:1;width:100%;max-width:430px;background:var(--bg2);border-radius:24px 24px 0 0;border:1px solid var(--sep);padding:0 0 32px;animation:sheet-up .28s cubic-bezier(.16,1,.3,1);max-height:70vh;overflow-y:auto}
 @keyframes sheet-up{from{transform:translateY(100%)}to{transform:none}}
+.sb-handle{width:36px;height:4px;border-radius:4px;background:var(--sep);margin:12px auto 14px}
+.sb-shero{display:flex;gap:14px;padding:0 18px 14px;border-bottom:1px solid var(--sep2)}
+.sb-sthumb{width:68px;height:120px;border-radius:10px;overflow:hidden;background:var(--bg4);flex-shrink:0}
+.sb-sthumb canvas{width:100%;height:100%;display:block}
+.sb-sinfo{flex:1;min-width:0}
+.sb-sname{font-family:var(--fh);font-size:14px;font-weight:800;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sb-sbadge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;margin-bottom:8px}
+.sb-srow{display:flex;justify-content:space-between;margin-bottom:4px}
+.sb-sk{font-size:12px;color:var(--t3)}
+.sb-sv{font-size:13px;font-weight:700}
+.sb-sfx{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
+.sb-sfxbadge{padding:3px 7px;border-radius:7px;font-size:11px;font-weight:600;background:var(--bg3);color:var(--t3)}
+.sb-sfxbadge.on{background:rgba(52,211,153,.1);color:var(--green)}
+.sb-sbtns{display:flex;gap:8px;padding:14px 18px 0}
+.sb-sbtns button{flex:1;padding:11px;border:none;border-radius:12px;font-family:var(--fn);font-size:13px;font-weight:700;cursor:pointer;transition:all .15s}
+.sb-sbtns button:active{transform:scale(.95)}
+.sb-sedit{background:var(--blue2);color:#a0a8ff}
+.sb-sclose{background:var(--bg3);color:var(--t2)}
 
-.sb-detail-handle{
-  width:36px;height:4px;border-radius:4px;background:var(--sep);
-  margin:12px auto 16px;
-}
-.sb-detail-hero{display:flex;gap:16px;padding:0 20px 16px;border-bottom:1px solid var(--sep2)}
-.sb-detail-thumb{
-  width:72px;height:128px;border-radius:10px;overflow:hidden;background:var(--bg4);flex-shrink:0;
-}
-.sb-detail-thumb canvas{width:100%;height:100%;display:block}
-.sb-detail-info{flex:1;min-width:0}
-.sb-detail-name{font-family:var(--fh);font-size:15px;font-weight:800;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sb-detail-role-badge{
-  display:inline-block;padding:4px 10px;border-radius:20px;
-  font-size:11px;font-weight:700;letter-spacing:.3px;margin-bottom:10px;
-}
-.sb-detail-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}
-.sb-detail-key{font-size:12px;color:var(--t3);font-weight:500}
-.sb-detail-val{font-size:13px;font-weight:700;color:var(--t1)}
-.sb-detail-effects{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
-.sb-detail-fx{padding:4px 8px;border-radius:8px;font-size:11px;font-weight:600;background:var(--bg3);color:var(--t2)}
-.sb-detail-fx.active{background:rgba(52,211,153,.1);color:var(--green)}
-
-.sb-detail-actions{display:flex;gap:10px;padding:16px 20px 0}
-.sb-detail-actions button{flex:1;padding:12px;border:none;border-radius:12px;font-family:var(--fn);font-size:13px;font-weight:700;cursor:pointer;transition:all .15s}
-.sb-detail-actions button:active{transform:scale(.95)}
-.sb-detail-edit{background:var(--blue2);color:#a0a8ff}
-.sb-detail-close{background:var(--bg3);color:var(--t2)}
-
-
+</style>
 </head>
 <body>
 <div id="app">
@@ -889,61 +715,47 @@ input[type=password]::placeholder{color:var(--t3)}
         <div class="mode-hint" id="modeHint"></div>
       </div>
 
-      <!-- STORYBOARD PREVIEW (App-9) -->
+      <!-- STORYBOARD PREVIEW -->
       <div class="card" id="storyboardCard">
         <div class="sb-head">
-          <div class="sb-head-left">
+          <div style="display:flex;align-items:center;gap:9px">
             <div class="sb-badge">🎞</div>
-            <div>
-              <div class="sb-title">Storyboard Preview</div>
-              <div class="sb-sub" id="sbSubtitle">Timeline avant montage</div>
-            </div>
+            <div><div class="sb-title">Storyboard</div><div class="sb-sub" id="sbSub">Timeline avant montage</div></div>
           </div>
-          <button class="sb-edit-btn" onclick="tab(1)">Modifier →</button>
+          <button class="sb-edit" onclick="tab(1)">Modifier →</button>
         </div>
-        <!-- Timeline scroll -->
-        <div class="sb-timeline" id="sbTimeline"></div>
-        <!-- Total duration bar -->
-        <div class="sb-total-bar">
-          <div class="sb-total-label">Durée</div>
-          <div class="sb-total-track"><div class="sb-total-fill" id="sbTotalFill" style="width:0%"></div></div>
-          <div class="sb-total-dur" id="sbTotalDur">—</div>
+        <div class="sb-tl" id="sbTl"></div>
+        <div class="sb-totbar">
+          <div class="sb-totlbl">Durée</div>
+          <div class="sb-tottrack"><div class="sb-totfill" id="sbTotF" style="width:0%"></div></div>
+          <div class="sb-totdur" id="sbTotD">—</div>
         </div>
       </div>
 
-      <!-- Clip detail bottom sheet -->
-      <div id="sbDetail">
-        <div class="sb-detail-scrim" onclick="closeSbDetail()"></div>
-        <div class="sb-detail-sheet">
-          <div class="sb-detail-handle"></div>
-          <div class="sb-detail-hero">
-            <div class="sb-detail-thumb"><canvas id="sbDetailCanvas"></canvas></div>
-            <div class="sb-detail-info">
-              <div class="sb-detail-name" id="sbDetailName">—</div>
-              <div class="sb-detail-role-badge" id="sbDetailBadge">—</div>
-              <div class="sb-detail-row">
-                <span class="sb-detail-key">Durée source</span>
-                <span class="sb-detail-val" id="sbDetailDur">—</span>
-              </div>
-              <div class="sb-detail-row">
-                <span class="sb-detail-key">Durée rendu</span>
-                <span class="sb-detail-val" id="sbDetailRender">—</span>
-              </div>
-              <div class="sb-detail-row">
-                <span class="sb-detail-key">Taille</span>
-                <span class="sb-detail-val" id="sbDetailSize">—</span>
-              </div>
-              <div class="sb-detail-effects" id="sbDetailFx"></div>
+      <!-- Detail sheet -->
+      <div id="sbSheet">
+        <div class="sb-scrim" onclick="sbClose()"></div>
+        <div class="sb-sheet">
+          <div class="sb-handle"></div>
+          <div class="sb-shero">
+            <div class="sb-sthumb"><canvas id="sbDC"></canvas></div>
+            <div class="sb-sinfo">
+              <div class="sb-sname" id="sbDN">—</div>
+              <div class="sb-sbadge" id="sbDB">—</div>
+              <div class="sb-srow"><span class="sb-sk">Durée source</span><span class="sb-sv" id="sbDD">—</span></div>
+              <div class="sb-srow"><span class="sb-sk">Durée rendu</span><span class="sb-sv" id="sbDR">—</span></div>
+              <div class="sb-srow"><span class="sb-sk">Taille</span><span class="sb-sv" id="sbDS">—</span></div>
+              <div class="sb-sfx" id="sbDF"></div>
             </div>
           </div>
-          <div class="sb-detail-actions">
-            <button class="sb-detail-edit" onclick="closeSbDetail();tab(1)">✏ Modifier l'ordre</button>
-            <button class="sb-detail-close" onclick="closeSbDetail()">Fermer</button>
+          <div class="sb-sbtns">
+            <button class="sb-sedit" onclick="sbClose();tab(1)">✏ Modifier l'ordre</button>
+            <button class="sb-sclose" onclick="sbClose()">Fermer</button>
           </div>
         </div>
       </div>
 
-
+      <!-- Progress -->
       <div class="card">
         <div class="prog-wrap">
           <div class="prog-head">
@@ -1147,13 +959,6 @@ input[type=password]::placeholder{color:var(--t3)}
 </div><!-- /app -->
 
 <script>
-/* ── GARDE-FOU GLOBAL — affiche les erreurs au lieu d'écran noir ── */
-window.onerror = function(msg, src, line, col, err){
-  const d = document.getElementById('app');
-  if(d) d.innerHTML = '<div style="padding:24px;color:#ff3b5c;font-family:monospace;font-size:13px;background:#0a0a0f;min-height:100vh"><b>⚠ JS ERROR</b><br><br>' + msg + '<br>L' + line + ':' + col + '<br><br>' + (err ? err.stack||'' : '') + '</div>';
-  return false;
-};
-
 /* ══ STATE ══ */
 let token,repo='xfville-art/App',branch='main',wfFile='viracut.yml',anthropicApiKey='';
 let startTime,timerInterval,dispatchTime;
@@ -1198,11 +1003,10 @@ function setMode(m){
   document.getElementById('optPunch').style.display=(m!=='cinema')?'block':'none';
   document.getElementById('optCinema').style.display=(m!=='punch')?'block':'none';
   renderSteps();updateChips();
-  // Rebuild storyboard with new mode durations
-  if(clips.length) buildStoryboard();
+  if(clips.length)buildStoryboard();
 }
 
-/* ══ STORAGE SAFE — fonctionne aussi en content:// (Brave Android) ══ */
+/* ══ STORE SAFE (fonctionne en content:// et GitHub Pages) ══ */
 const _store={
   get(k){try{return localStorage.getItem(k);}catch(e){return null;}},
   set(k,v){try{localStorage.setItem(k,v);}catch(e){}},
@@ -1218,10 +1022,7 @@ document.getElementById('tk').addEventListener('keydown',e=>{if(e.key==='Enter')
     const a=_store.get('vc_anthropic');
     if(t){token=t;if(r){repo=r;document.getElementById('repoIn').value=r;}if(a)anthropicApiKey=a;_goStudio();}
     else{if(r)document.getElementById('repoIn').value=r;if(a)document.getElementById('anthropicKey').value=a;}
-  }catch(e){
-    // content:// context — afficher le setup normalement
-    document.getElementById('viewSetup').style.display='block';
-  }
+  }catch(e){}
 })();
 
 function init(){
@@ -1436,14 +1237,10 @@ function removeClip(i){
   if(!clips.length){
     document.getElementById('orderCard').style.display='none';
     document.getElementById('viraCard').style.display='none';
+    document.getElementById('storyboardCard').style.display='none';
     dz.classList.remove('has-files');
     dz.innerHTML='<span class="drop-icon">🎞</span><div class="drop-title">Glisser les clips ici</div><div class="drop-hint">MP4 · MOV · AVI — 1 à 6 fichiers</div>';
-  }else renderFileList();
-  // Refresh storyboard if it was visible
-  const sbCard=document.getElementById('storyboardCard');
-  if(sbCard && sbCard.style.display!=='none'){
-    if(clips.length) buildStoryboard(); else sbCard.style.display='none';
-  }
+  }else{renderFileList();buildStoryboard();}
 }
 
 function renderFileList(){
@@ -1491,253 +1288,6 @@ function clipsReady(){
   document.getElementById('pSub').textContent=`${clips.length} clip${clips.length>1?'s':''} prêt${clips.length>1?'s':''} · mode ${m.toUpperCase()} — cliquer sur Lancer`;
   document.getElementById('td0').classList.add('show');
 }
-
-/* ══════════════════════════════════════════════════
-   STORYBOARD PREVIEW ENGINE  (App-9)
-   ══════════════════════════════════════════════════ */
-
-// Resolve final role of a clip given its position and total count
-function resolveRole(clip, idx, total){
-  if(clip.role !== 'auto') return clip.role;
-  if(total === 1) return 'punch';
-  if(idx === 0) return 'hook';
-  if(idx === total - 1) return 'punch';
-  return 'core';
-}
-
-// Estimate render duration per clip based on current config + role
-function estimateRenderDur(role, srcDur){
-  const cfg = getConfig();
-  const mode = currentMode;
-  if(mode === 'punch'){
-    if(role === 'hook')  return Math.min(parseFloat(cfg.hook_dur)||2.0, srcDur||99);
-    if(role === 'core')  return srcDur || parseFloat(cfg.core_dur)||2.5;
-    if(role === 'punch') return srcDur || parseFloat(cfg.punch_dur)||3.0;
-  }
-  // cinema / auto — use clip_dur approximation
-  const n = clips.length;
-  const target = Math.max(parseFloat(cfg.cinema_dur)||12, n * 3.0);
-  return Math.min(target / n, srcDur || 99);
-}
-
-// Role display helpers
-const ROLE_COLORS = {hook:'var(--red)',core:'var(--cyan)',punch:'var(--blue)',auto:'var(--gold)'};
-const ROLE_NAMES  = {hook:'HOOK',core:'CORE',punch:'PUNCH',auto:'AUTO'};
-const ROLE_ICONS  = {hook:'🎣',core:'⚙',punch:'💥',auto:'🤖'};
-
-// Store source durations extracted from video elements
-const _sbSrcDurs = {};
-
-function buildStoryboard(){
-  const card = document.getElementById('storyboardCard');
-  const tl   = document.getElementById('sbTimeline');
-  if(!clips.length){ card.style.display='none'; return; }
-
-  card.style.display='block';
-  const cfg = getConfig();
-  const mode = currentMode;
-  const n = clips.length;
-
-  // Compute max target duration for the progress bar reference
-  const LOGO_DUR = 2.5;
-  let maxTarget = LOGO_DUR;
-  if(mode === 'punch'){
-    maxTarget += (parseFloat(cfg.hook_dur)||2)+(parseFloat(cfg.core_dur)||2.5)+(parseFloat(cfg.punch_dur)||3);
-    maxTarget = Math.min(maxTarget, 15 + LOGO_DUR);
-  } else {
-    maxTarget += parseFloat(cfg.cinema_dur)||12;
-  }
-
-  // Build timeline HTML
-  let html = '';
-  clips.forEach((c, i) => {
-    const role   = resolveRole(c, i, n);
-    const color  = ROLE_COLORS[role];
-    const label  = ROLE_NAMES[role];
-
-    // Effects badges
-    const fxBadges = [];
-    if(role === 'hook'  && cfg.zoom_punch) fxBadges.push({cls:'zoom', txt:'ZOOM+'});
-    if(role === 'punch' && cfg.zoom_punch) fxBadges.push({cls:'zoom', txt:'ZOOM×'});
-    if(cfg.stickers) fxBadges.push({cls:'sub', txt:'🎯'});
-    fxBadges.push({cls:'smart', txt:'SC'});
-
-    const fxHtml = fxBadges.map(b=>`<div class="sb-fx-badge ${b.cls}">${b.txt}</div>`).join('');
-
-    if(i > 0){
-      html += `<div class="sb-connector"><div class="sb-connector-arrow">▶</div></div>`;
-    }
-
-    html += `
-    <div class="sb-frame role-${role}" id="sbf${i}" onclick="openSbDetail(${i})">
-      <div class="sb-thumb-wrap" id="sbt${i}">
-        <canvas id="sbc${i}" class="sb-thumb-canvas"></canvas>
-        <div class="sb-role-ribbon">${label}</div>
-        <div class="sb-clip-num">${i+1}</div>
-        <div class="sb-effects">${fxHtml}</div>
-        <div class="sb-dur-bar"><div class="sb-dur-fill" id="sbdf${i}" style="width:0%"></div></div>
-      </div>
-      <div class="sb-clip-dur" id="sbdur${i}">—</div>
-      <div class="sb-clip-label">${c.file.name.replace(/\.[^.]+$/,'').slice(0,10)}</div>
-    </div>`;
-  });
-
-  // Logo splash indicator
-  html += `
-    <div class="sb-connector"><div class="sb-connector-arrow">▶</div></div>
-    <div class="sb-logo-pill">
-      <div class="sb-logo-box">
-        <div class="sb-logo-text">LES</div>
-        <div class="sb-logo-text crados">CRADOS</div>
-        <div class="sb-logo-line"></div>
-        <div class="sb-logo-text ai">.Ai</div>
-      </div>
-      <div class="sb-logo-dur">2.5s</div>
-      <div class="sb-logo-lbl">OUTRO</div>
-    </div>`;
-
-  tl.innerHTML = html;
-
-  // Generate thumbnails + read durations
-  setTimeout(() => {
-    clips.forEach((c, i) => {
-      const canvas = document.getElementById('sbc'+i);
-      if(canvas) sbGenerateThumbnail(c.file, canvas, i, maxTarget);
-    });
-  }, 60);
-
-  // Update subtitle
-  const modeLabel = {auto:'AUTO',punch:'PUNCH',cinema:'CINÉMA'}[mode]||mode.toUpperCase();
-  document.getElementById('sbSubtitle').textContent = `${n} clip${n>1?'s':''} · Mode ${modeLabel}`;
-}
-
-function sbGenerateThumbnail(file, canvas, idx, maxTarget){
-  const video = document.createElement('video');
-  video.muted=true; video.playsInline=true;
-  const url = URL.createObjectURL(file);
-  video.src = url;
-
-  video.addEventListener('loadeddata', ()=>{
-    // Seek to 20% for a more representative frame
-    video.currentTime = Math.min(video.duration*0.2, 2.0);
-  });
-
-  video.addEventListener('seeked', ()=>{
-    // Draw 9:16 crop
-    canvas.width  = 76*2;
-    canvas.height = 135*2;
-    const ctx = canvas.getContext('2d');
-    const vr = video.videoWidth / video.videoHeight;
-    const cr = 76 / 135;
-    let sx=0,sy=0,sw=video.videoWidth,sh=video.videoHeight;
-    if(vr > cr){ sw = video.videoHeight*cr; sx=(video.videoWidth-sw)/2; }
-    else        { sh = video.videoWidth/cr;  sy=(video.videoHeight-sh)/2; }
-    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-    URL.revokeObjectURL(url);
-
-    // Store source duration
-    const srcDur = video.duration || 0;
-    _sbSrcDurs[idx] = srcDur;
-
-    // Determine role
-    const role = resolveRole(clips[idx], idx, clips.length);
-    const renderDur = estimateRenderDur(role, srcDur);
-
-    // Update duration label
-    const durEl = document.getElementById('sbdur'+idx);
-    if(durEl) durEl.textContent = renderDur.toFixed(1)+'s';
-
-    // Duration fill bar (relative to max segment allowed)
-    const maxSegDur = maxTarget / clips.length;
-    const pct = Math.min(renderDur / Math.max(maxSegDur, 1) * 100, 100);
-    const fill = document.getElementById('sbdf'+idx);
-    setTimeout(()=>{ if(fill) fill.style.width = pct+'%'; }, 100 + idx*80);
-
-    // Recompute total after all durations collected
-    sbUpdateTotal(maxTarget);
-  });
-  video.load();
-}
-
-function sbUpdateTotal(maxTarget){
-  const LOGO = 2.5;
-  let total = LOGO;
-  let allReady = true;
-  clips.forEach((c, i) => {
-    const role = resolveRole(c, i, clips.length);
-    const srcDur = _sbSrcDurs[i];
-    if(srcDur === undefined){ allReady=false; return; }
-    total += estimateRenderDur(role, srcDur);
-  });
-  if(!allReady) return;
-
-  const durEl = document.getElementById('sbTotalDur');
-  if(durEl) durEl.textContent = total.toFixed(1)+'s';
-
-  const fill = document.getElementById('sbTotalFill');
-  const MAX_DISPLAY = currentMode === 'punch' ? 17.5 : (parseFloat(getConfig().cinema_dur)||12) + LOGO + 2;
-  const pct = Math.min(total / MAX_DISPLAY * 100, 100);
-  setTimeout(()=>{ if(fill) fill.style.width = pct+'%'; }, 400);
-}
-
-// ── Clip detail bottom sheet ──
-let _sbDetailIdx = -1;
-function openSbDetail(idx){
-  _sbDetailIdx = idx;
-  const c    = clips[idx];
-  const role = resolveRole(c, idx, clips.length);
-  const color= ROLE_COLORS[role];
-  const label= ROLE_NAMES[role];
-  const icon = ROLE_ICONS[role];
-  const cfg  = getConfig();
-
-  document.getElementById('sbDetailName').textContent = c.file.name.replace(/\.[^.]+$/,'');
-
-  const badge = document.getElementById('sbDetailBadge');
-  badge.textContent = icon+' '+label;
-  badge.style.cssText = `background:${color}20;color:${color};border-radius:20px;padding:4px 10px;font-size:11px;font-weight:700`;
-
-  const srcDur = _sbSrcDurs[idx];
-  document.getElementById('sbDetailDur').textContent = srcDur ? srcDur.toFixed(2)+'s' : '—';
-
-  const renderDur = estimateRenderDur(role, srcDur);
-  document.getElementById('sbDetailRender').textContent = renderDur.toFixed(1)+'s';
-  document.getElementById('sbDetailSize').textContent = fmt(c.file.size);
-
-  // Effects list
-  const effects = [
-    {label:'Smart Cut',  active: true},
-    {label:'Zoom Hook',  active: role==='hook'  && cfg.zoom_punch},
-    {label:'Zoom Punch', active: role==='punch' && cfg.zoom_punch},
-    {label:'Stickers IA',active: cfg.stickers},
-    {label:'Sous-titres',active: true},
-    {label:'Grade BD',   active: true},
-    {label:'Logo Splash',active: idx===clips.length-1},
-  ];
-  document.getElementById('sbDetailFx').innerHTML = effects
-    .map(e=>`<span class="sb-detail-fx${e.active?' active':''}">${e.active?'✓ ':''} ${e.label}</span>`)
-    .join('');
-
-  // Thumbnail in detail
-  const detailCanvas = document.getElementById('sbDetailCanvas');
-  detailCanvas.width = 72*2; detailCanvas.height = 128*2;
-  const srcCanvas = document.getElementById('sbc'+idx);
-  if(srcCanvas && srcCanvas.width > 0){
-    const ctx = detailCanvas.getContext('2d');
-    ctx.drawImage(srcCanvas, 0, 0, detailCanvas.width, detailCanvas.height);
-  }
-
-  document.getElementById('sbDetail').classList.add('open');
-}
-
-function closeSbDetail(){
-  document.getElementById('sbDetail').classList.remove('open');
-  _sbDetailIdx = -1;
-}
-
-// ── End of Storyboard Engine ──
-
-
 
 /* ══ UI UPDATE ══ */
 function updateUI(pct,title,sub,active,note=''){
@@ -2025,8 +1575,7 @@ function applyRecommendedConfig(data){
   updateChips();
   if(rc.clip_order&&Array.isArray(rc.clip_order)&&rc.clip_order.length===clips.length){_recommendedClipOrder=rc.clip_order;clips=rc.clip_order.map(i=>clips[i]);renderFileList();}
   showApplyBanner(data);
-  // Rebuild storyboard with new order + config
-  if(clips.length) buildStoryboard();
+  if(clips.length)buildStoryboard();
 }
 function showApplyBanner(data){
   const body=document.getElementById('viraBody');if(!body)return;
@@ -2050,20 +1599,143 @@ function resetAnalyzeBtn(btn,success=false){
   btn.textContent=success?'🔄 Re-analyser':'🔥 Analyser';
 }
 
+
+/* ══ STORYBOARD ENGINE ══ */
+const _SBD={};
+const _RCLS={hook:'rh',core:'rc',punch:'rp',auto:'ra'};
+const _RCOL={hook:'var(--red)',core:'var(--cyan)',punch:'var(--blue)',auto:'var(--gold)'};
+const _RNAME={hook:'HOOK',core:'CORE',punch:'PUNCH',auto:'AUTO'};
+const _RICON={hook:'🎣',core:'⚙',punch:'💥',auto:'🤖'};
+
+function sbRole(c,i,n){
+  if(c.role!=='auto')return c.role;
+  if(n===1)return'punch';
+  if(i===0)return'hook';
+  if(i===n-1)return'punch';
+  return'core';
+}
+function sbEstDur(role,src){
+  const c=getConfig(),m=currentMode;
+  if(m==='punch'){
+    if(role==='hook')return Math.min(parseFloat(c.hook_dur)||2,src||99);
+    return src||parseFloat(role==='core'?c.core_dur:c.punch_dur)||3;
+  }
+  const n=clips.length,t=Math.max(parseFloat(c.cinema_dur)||12,n*3);
+  return Math.min(t/n,src||99);
+}
+function buildStoryboard(){
+  const card=document.getElementById('storyboardCard');
+  const tl=document.getElementById('sbTl');
+  if(!clips.length){card.style.display='none';return;}
+  card.style.display='block';
+  const n=clips.length,cfg=getConfig(),mode=currentMode;
+  const LOGO=2.5;
+  let maxT=LOGO+(mode==='punch'
+    ?Math.min((parseFloat(cfg.hook_dur)||2)+(parseFloat(cfg.core_dur)||2.5)+(parseFloat(cfg.punch_dur)||3),15)
+    :(parseFloat(cfg.cinema_dur)||12));
+
+  let html='';
+  clips.forEach((c,i)=>{
+    const role=sbRole(c,i,n),cls=_RCLS[role],lbl=_RNAME[role];
+    const fx=[];
+    if(cfg.zoom_punch)fx.push(role==='hook'?'ZOOM+':'ZOOM×');
+    if(cfg.stickers)fx.push('🎯');
+    fx.push('SC');
+    if(i>0)html+=`<div class="sb-conn"><div class="sb-conn-arr">▶</div></div>`;
+    html+=`<div class="sb-frame ${cls}" id="sbf${i}" onclick="sbOpen(${i})">
+      <div class="sb-tw" id="sbt${i}">
+        <canvas id="sbc${i}" class="sb-cv"></canvas>
+        <div class="sb-ribbon">${lbl}</div>
+        <div class="sb-num">${i+1}</div>
+        <div class="sb-fx">${fx.map(f=>`<span>${f}</span>`).join('')}</div>
+        <div class="sb-db"><div class="sb-df" id="sbdf${i}" style="width:0%"></div></div>
+      </div>
+      <div class="sb-dur" id="sbdur${i}">—</div>
+      <div class="sb-lbl">${c.file.name.replace(/\.[^.]+$/,'').slice(0,10)}</div>
+    </div>`;
+  });
+  html+=`<div class="sb-conn"><div class="sb-conn-arr">▶</div></div>
+    <div class="sb-logo-pill">
+      <div class="sb-logo-box">
+        <div class="sb-lt">LES</div><div class="sb-lt cr">CRADOS</div>
+        <div class="sb-ll"></div><div class="sb-lt ai">.Ai</div>
+      </div>
+      <div class="sb-logo-dur">2.5s</div><div class="sb-logo-lbl">OUTRO</div>
+    </div>`;
+  tl.innerHTML=html;
+  document.getElementById('sbSub').textContent=`${n} clip${n>1?'s':''} · ${({auto:'AUTO',punch:'PUNCH',cinema:'CINÉMA'}[mode]||mode.toUpperCase())}`;
+  setTimeout(()=>clips.forEach((c,i)=>{
+    const cv=document.getElementById('sbc'+i);
+    if(cv)sbThumb(c.file,cv,i,maxT);
+  }),60);
+}
+function sbThumb(file,canvas,idx,maxT){
+  const v=document.createElement('video');
+  v.muted=true;v.playsInline=true;
+  const url=URL.createObjectURL(file);
+  v.src=url;
+  v.addEventListener('loadeddata',()=>{v.currentTime=Math.min(v.duration*.2,2);});
+  v.addEventListener('seeked',()=>{
+    canvas.width=152;canvas.height=270;
+    const ctx=canvas.getContext('2d');
+    const vr=v.videoWidth/v.videoHeight,cr=76/135;
+    let sx=0,sy=0,sw=v.videoWidth,sh=v.videoHeight;
+    if(vr>cr){sw=v.videoHeight*cr;sx=(v.videoWidth-sw)/2;}
+    else{sh=v.videoWidth/cr;sy=(v.videoHeight-sh)/2;}
+    ctx.drawImage(v,sx,sy,sw,sh,0,0,152,270);
+    URL.revokeObjectURL(url);
+    const src=v.duration||0;
+    _SBD[idx]=src;
+    const role=sbRole(clips[idx],idx,clips.length);
+    const rd=sbEstDur(role,src);
+    const de=document.getElementById('sbdur'+idx);
+    if(de)de.textContent=rd.toFixed(1)+'s';
+    const pct=Math.min(rd/Math.max(maxT/clips.length,1)*100,100);
+    setTimeout(()=>{const df=document.getElementById('sbdf'+idx);if(df)df.style.width=pct+'%';},100+idx*80);
+    sbTotUpdate(maxT);
+  });
+  v.load();
+}
+function sbTotUpdate(maxT){
+  const LOGO=2.5;let tot=LOGO,all=true;
+  clips.forEach((c,i)=>{if(_SBD[i]===undefined){all=false;return;}tot+=sbEstDur(sbRole(c,i,clips.length),_SBD[i]);});
+  if(!all)return;
+  const de=document.getElementById('sbTotD');if(de)de.textContent=tot.toFixed(1)+'s';
+  const MAX=currentMode==='punch'?17.5:(parseFloat(getConfig().cinema_dur)||12)+LOGO+2;
+  setTimeout(()=>{const f=document.getElementById('sbTotF');if(f)f.style.width=Math.min(tot/MAX*100,100)+'%';},400);
+}
+let _sbIdx=-1;
+function sbOpen(idx){
+  _sbIdx=idx;
+  const c=clips[idx],role=sbRole(c,idx,clips.length);
+  const col=_RCOL[role],nm=_RNAME[role],ic=_RICON[role];
+  const cfg=getConfig();
+  document.getElementById('sbDN').textContent=c.file.name.replace(/\.[^.]+$/,'');
+  const b=document.getElementById('sbDB');
+  b.textContent=ic+' '+nm;b.style.cssText=`background:${col}20;color:${col};border-radius:20px;padding:3px 9px;font-size:11px;font-weight:700`;
+  const src=_SBD[idx];
+  document.getElementById('sbDD').textContent=src?src.toFixed(2)+'s':'—';
+  document.getElementById('sbDR').textContent=sbEstDur(role,src).toFixed(1)+'s';
+  document.getElementById('sbDS').textContent=fmt(c.file.size);
+  const fxList=[
+    {l:'Smart Cut',a:true},{l:'Zoom Hook',a:role==='hook'&&cfg.zoom_punch},
+    {l:'Zoom Punch',a:role==='punch'&&cfg.zoom_punch},{l:'Stickers',a:cfg.stickers},
+    {l:'Sous-titres',a:true},{l:'Grade BD',a:true},
+  ];
+  document.getElementById('sbDF').innerHTML=fxList.map(f=>`<span class="sb-sfxbadge${f.a?' on':''}">${f.a?'✓ ':''} ${f.l}</span>`).join('');
+  const dc=document.getElementById('sbDC');
+  dc.width=136;dc.height=240;
+  const sc=document.getElementById('sbc'+idx);
+  if(sc&&sc.width>0)dc.getContext('2d').drawImage(sc,0,0,136,240);
+  document.getElementById('sbSheet').classList.add('open');
+}
+function sbClose(){document.getElementById('sbSheet').classList.remove('open');_sbIdx=-1;}
+
 /* ══ INIT ══ */
 initRanges();
 renderSteps();
-
-/* Chargement fonts non-bloquant — fonctionne même en content:// */
-(function(){
-  try{
-    const l=document.createElement('link');
-    l.rel='stylesheet';l.media='print';
-    l.href='https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&display=swap';
-    l.onload=function(){this.media='all';};
-    document.head.appendChild(l);
-  }catch(e){}
-})();
+/* Fonts non-bloquant */
+(function(){try{var l=document.createElement('link');l.rel='stylesheet';l.media='print';l.href='https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&display=swap';l.onload=function(){this.media='all';};document.head.appendChild(l);}catch(e){}})();
 </script>
 </body>
 </html>
