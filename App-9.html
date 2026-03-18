@@ -959,6 +959,18 @@ input[type=password]::placeholder{color:var(--t3)}
 </div><!-- /app -->
 
 <script>
+/* ── CRASH VISIBLE AU LIEU D'ÉCRAN NOIR ── */
+window.onerror=function(m,s,l,c,e){
+  document.body.style.cssText='background:#0a0a0f;color:#ff3b5c;padding:20px;font-family:monospace;font-size:13px';
+  document.body.innerHTML='<b>ERR L'+l+'</b><br>'+m+'<br><br>'+(e?e.stack:'');
+  return false;
+};
+window.addEventListener('unhandledrejection',function(e){
+  document.body.style.cssText='background:#0a0a0f;color:#ff3b5c;padding:20px;font-family:monospace;font-size:13px';
+  document.body.innerHTML='<b>PROMISE REJECTION</b><br>'+(e.reason?e.reason.toString():'unknown');
+});
+document.addEventListener('DOMContentLoaded',function(){
+
 /* ══ STATE ══ */
 let token,repo='xfville-art/App',branch='main',wfFile='viracut.yml',anthropicApiKey='';
 let startTime,timerInterval,dispatchTime;
@@ -1736,6 +1748,8 @@ initRanges();
 renderSteps();
 /* Fonts non-bloquant */
 (function(){try{var l=document.createElement('link');l.rel='stylesheet';l.media='print';l.href='https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&display=swap';l.onload=function(){this.media='all';};document.head.appendChild(l);}catch(e){}})();
+
+});
 </script>
 </body>
 </html>
