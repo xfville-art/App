@@ -13,7 +13,7 @@ const fetch = require("node-fetch");
 
 admin.initializeApp();
 
-const GITHUB_TOKEN = functions.config().github.token;
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN_VIRACUT;
 const REPO         = "xfville-art/App";
 const BRANCH       = "main";
 
