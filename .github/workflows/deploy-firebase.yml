@@ -25,17 +25,10 @@ jobs:
       - name: Write service account
         run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > /tmp/sa.json
 
-      - name: Set GitHub token in Firebase config
-        run: |
-          firebase functions:config:set \
-            github.token="${{ secrets.GITHUB_TOKEN_VIRACUT }}" \
-            --project viracut-29189
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa.json
-
       - name: Deploy Functions
         run: |
           firebase deploy --only functions \
             --project viracut-29189
         env:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa.json
+          GITHUB_TOKEN_VIRACUT: ${{ secrets.GITHUB_TOKEN_VIRACUT }}
