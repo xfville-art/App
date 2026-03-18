@@ -666,174 +666,293 @@ Réponds UNIQUEMENT en JSON valide, zéro texte avant ou après :
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# STICKER ENGINE  (v1) — Génération PNG + overlay FFmpeg animé
+# STICKER ENGINE  (v2) — Style BD / Garbage Pail Kids
+# Canvas 100% transparent — zéro fond carré — formes explosives
 # ═══════════════════════════════════════════════════════════════════════
 import math as _math
 
+def _bd_stroke_text(draw, text, font, x, y, fill, stroke_col, sw=6, anchor="mm"):
+    """Texte avec contour épais BD — 8 directions + diagonales."""
+    offsets = [(-sw,0),(sw,0),(0,-sw),(0,sw),
+               (-sw,-sw),(sw,-sw),(-sw,sw),(sw,sw),
+               (-sw//2,-sw),(sw//2,-sw),(-sw//2,sw),(sw//2,sw)]
+    for dx, dy in offsets:
+        draw.text((x+dx, y+dy), text, fill=stroke_col, font=font, anchor=anchor)
+    draw.text((x, y), text, fill=fill, font=font, anchor=anchor)
+
+def _spiky_polygon(cx, cy, n_spikes, r_outer, r_inner, angle_offset=0, jitter=0, rnd=None):
+    """Génère un polygone en étoile irrégulière (spiky) — style explosion BD."""
+    pts = []
+    for i in range(n_spikes * 2):
+        angle = _math.radians(i * 180 / n_spikes + angle_offset)
+        r = r_outer if i % 2 == 0 else r_inner
+        if jitter and rnd:
+            r += rnd.randint(-jitter, jitter)
+        pts.append((cx + r * _math.cos(angle), cy + r * _math.sin(angle)))
+    return pts
+
 def _gen_sticker_png(stype, text, color_hex, size, out_path):
     """
-    Génère un sticker PNG RGBA via Pillow.
-    Contour noir épais + ombre portée pour visibilité sur fond chargé.
+    Génère un sticker PNG RGBA 100% transparent — style BD Garbage Pail Kids.
+    Aucun fond carré ou rectangulaire. Formes explosives avec contours noirs épais.
     """
     try:
         from PIL import Image, ImageDraw, ImageFont, ImageFilter
+        import random as _rnd
     except ImportError:
         return False
 
-    # Canvas plus grand pour laisser de la place à l'ombre
-    PAD = max(12, size // 14)
+    # Canvas large avec marge généreuse pour les spikes qui débordent
+    PAD = max(size // 5, 40)
     W = H = size + PAD * 2
+    cx, cy = W // 2, H // 2
+
+    # Fond TOTALEMENT transparent — pas de rectangle blanc
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d   = ImageDraw.Draw(img)
-    cx, cy = W // 2, H // 2
-    # Fond blanc semi-opaque arrondi = toujours visible sur n'importe quel fond
-    bg_r = max(10, W // 8)
-    d.rounded_rectangle([PAD//2, PAD//2, W-PAD//2, H-PAD//2],
-                         radius=bg_r, fill=(255, 255, 255, 160))
 
+    # Couleur principale
     ch = color_hex.lstrip("#")
     cr, cg, cb = int(ch[0:2],16), int(ch[2:4],16), int(ch[4:6],16)
     col_main  = (cr, cg, cb, 255)
-    col_dark  = (max(0,cr-80), max(0,cg-80), max(0,cb-80), 255)
-    col_light = (min(255,cr+100), min(255,cg+100), min(255,cb+100), 200)
-    stroke    = (0, 0, 0, 255)  # contour noir
+    col_light = (min(255,cr+120), min(255,cg+120), min(255,cb+80), 255)
+    col_dark  = (max(0,cr-60), max(0,cg-60), max(0,cb-60), 255)
+    BLACK     = (0, 0, 0, 255)
+    WHITE     = (255, 255, 255, 255)
 
-    r_base = int(size * 0.38)
+    stroke_w = max(6, size // 28)   # contour épais proportionnel
 
     try:
-        font_big = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", max(16, size//4))
-        font_sm  = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", max(12, size//6))
+        font_big = ImageFont.truetype(
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            max(20, int(size * 0.30)))
+        font_med = ImageFont.truetype(
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            max(14, int(size * 0.20)))
+        font_sm  = ImageFont.truetype(
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            max(11, int(size * 0.14)))
     except Exception:
-        font_big = font_sm = ImageFont.load_default()
+        font_big = font_med = font_sm = ImageFont.load_default()
 
-    def draw_stroke_ellipse(draw, bbox, fill, stroke_col, stroke_w=4):
-        sw = stroke_w
-        draw.ellipse([bbox[0]-sw, bbox[1]-sw, bbox[2]+sw, bbox[3]+sw], fill=stroke_col)
-        draw.ellipse(bbox, fill=fill)
-
+    # ── SPLAT — éclaboussure organique style slime BD ─────────────────
     if stype == "splat":
-        import random as _rnd
         _rnd.seed(hash(text or "splat") % 9999)
-        r = r_base
-        # Ombre
-        shadow = Image.new("RGBA", (W, H), (0,0,0,0))
-        sd = ImageDraw.Draw(shadow)
-        sd.ellipse([cx-r+4, cy-r+6, cx+r+4, cy+r+6], fill=(0,0,0,100))
-        img.alpha_composite(shadow)
-        d = ImageDraw.Draw(img)
-        # Contour
-        d.ellipse([cx-r-5, cy-r-5, cx+r+5, cy+r+5], fill=stroke)
-        d.ellipse([cx-r, cy-r, cx+r, cy+r], fill=col_main)
-        for angle_deg in range(0, 360, 28):
-            angle = _math.radians(angle_deg + _rnd.randint(-12,12))
-            dist = r + _rnd.randint(int(size*0.08), int(size*0.18))
-            bx = cx + int(dist * _math.cos(angle))
-            by = cy + int(dist * _math.sin(angle))
-            br = _rnd.randint(int(size*0.06), int(size*0.12))
-            d.ellipse([bx-br-3, by-br-3, bx+br+3, by+br+3], fill=stroke)
-            d.ellipse([bx-br, by-br, bx+br, by+br], fill=col_main)
-        d.ellipse([cx-r//3, cy-r//2, cx, cy-r//6], fill=col_light)
-        if text:
-            # Stroke texte
-            for dx,dy in [(-2,0),(2,0),(0,-2),(0,2)]:
-                d.text((cx+dx, cy+dy), text[:10], fill=stroke, font=font_big, anchor="mm")
-            d.text((cx, cy), text[:10], fill=(255,255,255,255), font=font_big, anchor="mm")
+        r_core = int(size * 0.34)
 
+        # Tentacules irrégulières rayonnantes — vraie éclaboussure BD
+        n_arms = _rnd.randint(11, 15)
+        for i in range(n_arms):
+            angle = _math.radians(i * 360 / n_arms + _rnd.randint(-14, 14))
+            arm_len = int(size * _rnd.uniform(0.40, 0.60))
+            arm_w   = _rnd.randint(int(size*0.06), int(size*0.14))
+            tip_x = cx + int(arm_len * _math.cos(angle))
+            tip_y = cy + int(arm_len * _math.sin(angle))
+            # Contour bras
+            d.line([(cx, cy), (tip_x, tip_y)], fill=BLACK, width=arm_w + stroke_w*2)
+            d.line([(cx, cy), (tip_x, tip_y)], fill=col_main, width=arm_w)
+            # Goutte au bout
+            drop_r = _rnd.randint(int(size*0.05), int(size*0.10))
+            d.ellipse([tip_x-drop_r-stroke_w, tip_y-drop_r-stroke_w,
+                       tip_x+drop_r+stroke_w, tip_y+drop_r+stroke_w], fill=BLACK)
+            d.ellipse([tip_x-drop_r, tip_y-drop_r,
+                       tip_x+drop_r, tip_y+drop_r], fill=col_main)
+
+        # Corps central épais
+        d.ellipse([cx-r_core-stroke_w*2, cy-r_core-stroke_w*2,
+                   cx+r_core+stroke_w*2, cy+r_core+stroke_w*2], fill=BLACK)
+        d.ellipse([cx-r_core, cy-r_core, cx+r_core, cy+r_core], fill=col_main)
+
+        # Reflet luisant style slime
+        hl_r = int(r_core * 0.28)
+        d.ellipse([cx-hl_r*2, cy-hl_r*2, cx-hl_r//2, cy-hl_r//2], fill=col_light)
+
+        # Texte au centre
+        if text:
+            _bd_stroke_text(d, text[:8], font_big, cx, cy, WHITE, BLACK, sw=stroke_w)
+
+    # ── EXPLOSION — étoile pointue chaotique style BD choc ─────────────
     elif stype == "impact":
-        rings = [(220,50,0,230),(255,130,0,190),(255,210,0,150),(255,255,100,110)]
-        for i, rc in enumerate(rings):
-            r = int(size*0.44) - i*int(size*0.09)
-            lw = max(3, int(size*0.032)) - i
-            # Contour noir
-            d.ellipse([cx-r-lw-2, cy-r-lw-2, cx+r+lw+2, cy+r+lw+2], outline=(0,0,0,200), width=lw+2)
-            d.ellipse([cx-r, cy-r, cx+r, cy+r], outline=rc, width=lw)
-        d.ellipse([cx-int(size*0.09)-3, cy-int(size*0.09)-3,
-                   cx+int(size*0.09)+3, cy+int(size*0.09)+3], fill=stroke)
-        d.ellipse([cx-int(size*0.09), cy-int(size*0.09),
-                   cx+int(size*0.09), cy+int(size*0.09)], fill=(255,60,0,255))
+        _rnd.seed(hash(text or "BOOM") % 8888)
+        # Étoile principale — très pointue, irrégulière
+        r_out = int(size * 0.46)
+        r_in  = int(size * 0.17)
+        n_pts = _rnd.randint(9, 13)
+        pts_outer = _spiky_polygon(cx, cy, n_pts, r_out, r_in, angle_offset=-90,
+                                   jitter=int(size*0.04), rnd=_rnd)
+        # Ombre décalée
+        shadow_pts = [(x+5, y+6) for x,y in pts_outer]
+        d.polygon(shadow_pts, fill=(0,0,0,160))
+        # Contour noir épais
+        pts_stroke = _spiky_polygon(cx, cy, n_pts, r_out+stroke_w*2, r_in+stroke_w,
+                                    angle_offset=-90, jitter=int(size*0.02), rnd=None)
+        d.polygon(pts_stroke, fill=BLACK)
+        # Corps explosion dégradé simulé (deux couches)
+        d.polygon(pts_outer, fill=col_main)
+        pts_inner = _spiky_polygon(cx, cy, n_pts, int(r_out*0.65), int(r_in*0.80),
+                                   angle_offset=-90)
+        d.polygon(pts_inner, fill=col_light)
 
+        # Texte central en capitales italiques simulées via décalage
+        label = text[:6] if text else "BOOM!"
+        _bd_stroke_text(d, label, font_big, cx, cy, BLACK, WHITE, sw=stroke_w)
+        # Double trait sous le texte — style BD classique
+        tw = len(label) * int(size*0.18)
+        ty = cy + int(size*0.17)
+        d.rectangle([cx-tw//2, ty, cx+tw//2, ty+max(3,stroke_w//2)], fill=BLACK)
+
+    # ── BULLE BD — vraie bulle de BD irrégulière avec queue pointue ────
     elif stype == "bubble":
-        bx, by = PAD, PAD
-        bw, bh = int(size*0.84), int(size*0.60)
-        # Ombre
-        d.rounded_rectangle([bx+4, by+6, bx+bw+4, by+bh+6], radius=int(size*0.09), fill=(0,0,0,120))
-        # Contour noir
-        d.rounded_rectangle([bx-3, by-3, bx+bw+3, by+bh+3], radius=int(size*0.10),
-                             fill=stroke)
-        d.rounded_rectangle([bx, by, bx+bw, by+bh], radius=int(size*0.09),
-                             fill=(255,255,255,245))
-        tail = [(bx+int(bw*0.15), by+bh), (bx+int(bw*0.40), by+bh),
-                (bx+int(bw*0.08), by+bh+int(size*0.22))]
-        d.polygon([(p[0]-2,p[1]+2) for p in tail], fill=stroke)
-        d.polygon(tail, fill=(255,255,255,245))
-        if text:
-            lines = text.split(" ")
-            mid = max(1, len(lines)//2)
-            l1, l2 = " ".join(lines[:mid]), " ".join(lines[mid:])
-            ty = by + bh//2 - (int(size*0.07) if l2 else 0)
-            for dx,dy in [(-2,0),(2,0),(0,-2),(0,2)]:
-                d.text((bx+bw//2+dx, ty+dy), l1, fill=stroke, font=font_big, anchor="mm")
-            d.text((bx+bw//2, ty), l1, fill=(200,0,0,255), font=font_big, anchor="mm")
-            if l2:
-                for dx,dy in [(-1,0),(1,0),(0,-1),(0,1)]:
-                    d.text((bx+bw//2+dx, ty+int(size*0.16)+dy), l2, fill=stroke, font=font_sm, anchor="mm")
-                d.text((bx+bw//2, ty+int(size*0.16)), l2, fill=(40,40,40,255), font=font_sm, anchor="mm")
+        _rnd.seed(hash(text or "bubble") % 7777)
+        # Ellipse légèrement asymétrique
+        bw = int(size * 0.88)
+        bh = int(size * 0.58)
+        bx = cx - bw // 2
+        by = cy - bh // 2 - int(size * 0.08)
 
-    elif stype == "star":
-        pts = []
-        for i in range(16):
-            angle = _math.radians(i * 22.5 - 90)
-            r = int(size*0.44) if i%2==0 else int(size*0.24)
-            pts.append((cx + r*_math.cos(angle), cy + r*_math.sin(angle)))
         # Ombre
-        shadow_pts = [(x+4, y+5) for x,y in pts]
-        d.polygon(shadow_pts, fill=(0,0,0,100))
-        # Contour
-        outline_pts = [(cx + (r+4)*_math.cos(_math.radians(i*22.5-90)),
-                        cy + (r+4)*_math.sin(_math.radians(i*22.5-90)))
-                       for i,r in [(i, int(size*0.44) if i%2==0 else int(size*0.24))
-                                   for i in range(16)]]
-        d.polygon(outline_pts, fill=stroke)
-        d.polygon(pts, fill=(255,220,0,250))
-        if text:
-            parts = text.split(" ", 1)
-            for dx,dy in [(-2,0),(2,0),(0,-2),(0,2)]:
-                d.text((cx+dx, cy-int(size*0.07)+dy), parts[0][:8], fill=stroke, font=font_big, anchor="mm")
-            d.text((cx, cy-int(size*0.07)), parts[0][:8], fill=(200,0,0,255), font=font_big, anchor="mm")
-            if len(parts)>1:
-                for dx,dy in [(-1,0),(1,0)]:
-                    d.text((cx+dx, cy+int(size*0.12)+dy), parts[1][:8], fill=stroke, font=font_sm, anchor="mm")
-                d.text((cx, cy+int(size*0.12)), parts[1][:8], fill=(30,30,30,255), font=font_sm, anchor="mm")
+        d.ellipse([bx+5, by+7, bx+bw+5, by+bh+7], fill=(0,0,0,150))
+        # Contour BD épais
+        d.ellipse([bx-stroke_w, by-stroke_w, bx+bw+stroke_w, by+bh+stroke_w], fill=BLACK)
+        d.ellipse([bx, by, bx+bw, by+bh], fill=WHITE)
 
-    elif stype == "zap":
-        zap = [
-            (int(W*0.55),int(H*0.05)), (int(W*0.28),int(H*0.50)),
-            (int(W*0.50),int(H*0.50)), (int(W*0.22),int(H*0.95)),
-            (int(W*0.72),int(H*0.44)), (int(W*0.50),int(H*0.44)),
-            (int(W*0.72),int(H*0.05))
+        # Queue pointue BD (triangle irrégulier)
+        qx = bx + int(bw * 0.25)
+        qy = by + bh
+        tail = [
+            (qx, qy),
+            (qx + int(bw*0.22), qy - int(bh*0.08)),
+            (qx - int(bw*0.04), qy + int(size*0.28))
         ]
-        shadow_zap = [(x+3, y+4) for x,y in zap]
-        d.polygon(shadow_zap, fill=(0,0,0,130))
-        stroke_zap = [(int(W*0.55)-3,int(H*0.05)-3),(int(W*0.28)-3,int(H*0.50)),(int(W*0.50)-3,int(H*0.50)),
-                      (int(W*0.22)-3,int(H*0.95)+3),(int(W*0.72)+3,int(H*0.44)),(int(W*0.50)+3,int(H*0.44)),
-                      (int(W*0.72)+3,int(H*0.05)-3)]
-        d.polygon(stroke_zap, fill=stroke)
-        d.polygon(zap, fill=(255,240,0,255))
+        d.polygon([(p[0]+3,p[1]+4) for p in tail], fill=(0,0,0,150))
+        d.polygon(tail, fill=BLACK)
+        tail_inner = [
+            (qx + stroke_w//2, qy),
+            (qx + int(bw*0.20), qy - int(bh*0.06)),
+            (qx - int(bw*0.01), qy + int(size*0.22))
+        ]
+        d.polygon(tail_inner, fill=WHITE)
 
+        # Reflet en haut à gauche
+        hl_x = bx + int(bw*0.15)
+        hl_y = by + int(bh*0.15)
+        d.ellipse([hl_x, hl_y, hl_x+int(bw*0.28), hl_y+int(bh*0.20)],
+                  fill=(255,255,255,180))
+
+        # Texte
+        if text:
+            words = text.upper().split()
+            if len(words) <= 2:
+                label = " ".join(words)
+                _bd_stroke_text(d, label, font_big, bx+bw//2, by+bh//2, (180,0,0,255), BLACK, sw=stroke_w)
+            else:
+                mid = len(words) // 2
+                l1 = " ".join(words[:mid])
+                l2 = " ".join(words[mid:])
+                _bd_stroke_text(d, l1, font_med, bx+bw//2, by+bh//2 - int(size*0.09),
+                                (180,0,0,255), BLACK, sw=stroke_w-2)
+                _bd_stroke_text(d, l2, font_med, bx+bw//2, by+bh//2 + int(size*0.09),
+                                (20,20,20,255), BLACK, sw=stroke_w-2)
+        else:
+            # Sans texte : lignes de choc BD (hachures expressives)
+            for i in range(3):
+                lx = bx + int(bw*(0.20 + i*0.25))
+                d.line([(lx, by+int(bh*0.25)), (lx+int(bw*0.08), by+int(bh*0.75))],
+                       fill=(150,0,0,220), width=max(3, stroke_w//2))
+
+    # ── STAR — étoile chaotique à 7 branches asymétriques ─────────────
+    elif stype == "star":
+        _rnd.seed(hash(text or "star") % 6666)
+        n_branches = 7   # impair = plus dynamique qu'un 8 branches symétrique
+        r_out = int(size * 0.46)
+        r_in  = int(size * 0.14)  # creux très prononcé = branches très pointues
+        pts   = _spiky_polygon(cx, cy, n_branches, r_out, r_in,
+                               angle_offset=-90, jitter=int(size*0.03), rnd=_rnd)
+
+        # Ombre
+        d.polygon([(x+5,y+6) for x,y in pts], fill=(0,0,0,160))
+        # Contour noir épais
+        pts_s = _spiky_polygon(cx, cy, n_branches, r_out+stroke_w*2, r_in+stroke_w,
+                               angle_offset=-90)
+        d.polygon(pts_s, fill=BLACK)
+        # Corps jaune / couleur
+        d.polygon(pts, fill=(255, 215, 0, 255))
+        # Surbrillance centre
+        pts_c = _spiky_polygon(cx, cy, n_branches, int(r_out*0.52), int(r_in*0.90),
+                               angle_offset=-90)
+        d.polygon(pts_c, fill=(255, 245, 100, 255))
+
+        # Texte
+        if text:
+            label = text.upper()[:7]
+            _bd_stroke_text(d, label, font_big, cx, cy, (160, 0, 0, 255), BLACK, sw=stroke_w)
+        else:
+            # Étoile vide : petit cercle central
+            d.ellipse([cx-int(size*0.07), cy-int(size*0.07),
+                       cx+int(size*0.07), cy+int(size*0.07)], fill=BLACK)
+            d.ellipse([cx-int(size*0.04), cy-int(size*0.04),
+                       cx+int(size*0.04), cy+int(size*0.04)], fill=(255,200,0,255))
+
+    # ── ZAP — éclair BD massif + trait de vitesse ──────────────────────
+    elif stype == "zap":
+        # Éclair principal — forme classique mais plus massive
+        zap = [
+            (int(W*0.58), int(H*0.03)),
+            (int(W*0.26), int(H*0.48)),
+            (int(W*0.52), int(H*0.46)),
+            (int(W*0.20), int(H*0.97)),
+            (int(W*0.74), int(H*0.42)),
+            (int(W*0.48), int(H*0.44)),
+            (int(W*0.76), int(H*0.03)),
+        ]
+        # Ombre
+        d.polygon([(x+5,y+6) for x,y in zap], fill=(0,0,0,180))
+        # Contour noir épais
+        zap_s = [(x + (stroke_w if x > cx else -stroke_w),
+                  y + (stroke_w if y > cy else -stroke_w)) for x,y in zap]
+        d.polygon(zap_s, fill=BLACK)
+        # Corps jaune électrique
+        d.polygon(zap, fill=(255, 235, 0, 255))
+        # Reflet blanc interne
+        zap_hl = [(int(W*0.55), int(H*0.07)),
+                  (int(W*0.34), int(H*0.44)),
+                  (int(W*0.50), int(H*0.43)),
+                  (int(W*0.40), int(H*0.72)),
+                  (int(W*0.62), int(H*0.42)),
+                  (int(W*0.50), int(H*0.43)),
+                  (int(W*0.68), int(H*0.07))]
+        d.polygon(zap_hl, fill=(255, 255, 180, 160))
+
+        # Traits de vitesse à gauche
+        for i, frac in enumerate([0.25, 0.45, 0.65]):
+            lx_end = int(W * 0.18)
+            lx_start = int(W * (0.05 + i * 0.04))
+            ly = int(H * frac)
+            d.line([(lx_start, ly), (lx_end, ly)],
+                   fill=BLACK, width=max(3, stroke_w//2))
+            d.line([(lx_start+2, ly), (lx_end-2, ly)],
+                   fill=(255,235,0,200), width=max(2, stroke_w//3))
+
+    # ── ARROW — flèche BD massive avec contour ─────────────────────────
     elif stype == "arrow":
         pts_a = [
-            (int(W*0.92),int(H*0.36)),(int(W*0.92),int(H*0.64)),
-            (int(W*0.45),int(H*0.64)),(int(W*0.45),int(H*0.82)),
-            (int(W*0.08),cy),
-            (int(W*0.45),int(H*0.18)),(int(W*0.45),int(H*0.36))
+            (int(W*0.95), cy),                          # pointe droite
+            (int(W*0.52), int(H*0.14)),                 # épaule haute droite
+            (int(W*0.52), int(H*0.33)),                 # rentrant haut
+            (int(W*0.08), int(H*0.33)),                 # gauche haut
+            (int(W*0.08), int(H*0.67)),                 # gauche bas
+            (int(W*0.52), int(H*0.67)),                 # rentrant bas
+            (int(W*0.52), int(H*0.86)),                 # épaule basse droite
         ]
-        shadow_a = [(x+3, y+4) for x,y in pts_a]
-        d.polygon(shadow_a, fill=(0,0,0,130))
-        stroke_a = [(x-2 if x<cx else x+2, y-2 if y<cy else y+2) for x,y in pts_a]
-        d.polygon(stroke_a, fill=stroke)
+        d.polygon([(x+5,y+6) for x,y in pts_a], fill=(0,0,0,160))
+        pts_s = [(x + (stroke_w if x > cx else -stroke_w),
+                  y + (stroke_w if y > cy else -stroke_w)) for x,y in pts_a]
+        d.polygon(pts_s, fill=BLACK)
         d.polygon(pts_a, fill=col_main)
+        # Reflet sur la pointe
+        hl = [(int(W*0.90), cy), (int(W*0.60), int(H*0.22)), (int(W*0.60), int(H*0.38))]
+        d.polygon(hl, fill=col_light)
 
-    # Léger flou sur l'ombre portée pour adoucir
     img.save(out_path)
     return True
 
@@ -965,24 +1084,28 @@ def sticker_analysis(segments, opts, vira_result):
         return _default_stickers(W_px, content_dur)
 
     prompt = (
-        f"Tu es un expert TikTok Les Crados (cartes satiriques style Garbage Pail Kids).\n"
-        f"Place des stickers animés pour amplifier l'impact. Vidéo = {content_dur:.1f}s (hors logo).\n\n"
+        f"Tu es un directeur artistique BD style Garbage Pail Kids / Les Crados — humour absurde, impact visuel maximal.\n"
+        f"Place 2-3 stickers BD PERCUTANTS sur cette vidéo TikTok de {content_dur:.1f}s.\n\n"
         f"SEGMENTS :\n{segs_desc}\n{vira_recs}\n\n"
-        f"STICKERS : splat (slime), impact (ondes choc), bubble (texte bulle ≤12 chars), "
-        f"star (texte exclamation ≤8 chars), zap (éclair)\n\n"
-        f"RÈGLES : 2-3 stickers · t_start < {content_dur-1.0:.1f}s · "
-        f"x_pct < 0.25 ou > 0.75 (bords) · size_pct 0.24-0.32 · t_dur 1.0-1.8s\n\n"
+        f"TYPES DE STICKERS :\n"
+        f"- splat : éclaboussure slime (onomatopée courte ou vide)\n"
+        f"- impact : explosion étoilée pointue (BOOM! POW! BAM! BEURK! OUAF!)\n"
+        f"- bubble : bulle BD irrégulière (texte percutant ≤10 chars MAJUSCULES)\n"
+        f"- star : étoile 7 branches chaotique (texte ≤6 chars ou vide)\n"
+        f"- zap : éclair électrique (pas de texte)\n\n"
+        f"COULEURS percutantes : splat=#00CC44 ou #AA00FF | impact=#FF2200 ou #FF8800 | star=#FFD700 ou #00DDFF | zap=#FFEE00\n\n"
+        f"PLACEMENT : x_pct < 0.22 (gauche) ou > 0.78 (droite) · size_pct 0.28-0.35 · t_dur 1.2-2.0s\n"
+        f"Textes : ONOMATOPÉES BD (BOUM! SPLATCH! ARGH! YAK! BEURK! SPLASH!)\n\n"
         f"JSON UNIQUEMENT :\n"
         f"{{\"stickers\": [{{"
         f"\"type\":\"<splat|impact|bubble|star|zap>\","
-        f"\"text\":\"<vide ou texte>\"," 
-        f"\"color\":\"<hex>\","
-        f"\"size_pct\":<float>,"
-        f"\"x_pct\":<float>,"
-        f"\"y_pct\":<float>,"
+        f"\"text\":\"<ONOMATOPÉE ou vide>\","
+        f"\"color\":\"<hex percutant>\","
+        f"\"size_pct\":<float 0.28-0.35>,"
+        f"\"x_pct\":<float bords>,"
+        f"\"y_pct\":<float 0.15-0.80>,"
         f"\"t_start\":<float>,"
-        f"\"t_dur\":<float>"
-        f"}}]}}"
+        f"\"t_dur\":<float 1.2-2.0>"
     )
 
     print("  [Stickers] Analyse IA en cours…")
