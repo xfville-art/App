@@ -569,30 +569,40 @@ def build_cinema_overlay_no_text(opts):
     Wi, Hi  = int(W), int(H)
     lb_h    = cfg(opts, "cinema_lb_h")
     total   = duration("_assembled.mp4")
-    fade_out_st = max(0.0, total - 0.6)
-    fade_in_d   = 0.25  # fade-in vidéo propre au début
+    LOGO_DUR = 2.5  # durée du logo splash
+
+    # Fade vidéo : ne commence qu'à 0.5s de la fin du contenu (pas du logo)
+    fade_out_d   = 0.5
+    fade_out_st  = max(0.0, total - fade_out_d)
+    fade_in_d    = 0.25
 
     lb = (
         f"drawbox=y=0:h={lb_h}:c=black@1:t=fill,"
         f"drawbox=y={Hi - lb_h}:h={lb_h}:c=black@1:t=fill"
     )
-    # Vignette légère pour look cinématique
     vignette = "vignette=PI/4.5:eval=frame"
-    # Fade in + fade out vidéo
-    fades = f"fade=t=in:st=0:d={fade_in_d},fade=t=out:st={fade_out_st:.2f}:d=0.6"
-
+    fades = f"fade=t=in:st=0:d={fade_in_d},fade=t=out:st={fade_out_st:.2f}:d={fade_out_d}"
     vf = f"{lb},{vignette},{fades}"
 
-    # Audio : fade out calé sur la vraie durée (garde-fou min 0.5s de contenu)
-    audio_fade_d = min(0.8, total * 0.15)
-    audio_fade_st = max(0.0, total - audio_fade_d)
-
+    # Pas de fade audio ici — on le fait sur output.mp4 final (après logo)
     run(
         f'ffmpeg -y -i _assembled.mp4 '
-        f'-vf "{vf}" -af "afade=t=out:st={audio_fade_st:.2f}:d={audio_fade_d:.2f}" '
-        f'-c:v libx264 -crf {cfg(opts,"crf")} _premain.mp4'
+        f'-vf "{vf}" '
+        f'-c:v libx264 -crf {cfg(opts,"crf")} -c:a copy _premain.mp4'
     )
     append_logo("_premain.mp4", opts)
+
+    # Audio fade sur le fichier final — couvre le logo proprement
+    total_final = duration("output.mp4")
+    # Fade audio : commence 1.2s avant la fin du logo (laisse le son respirer)
+    audio_fade_d  = min(1.2, LOGO_DUR * 0.5)
+    audio_fade_st = max(0.0, total_final - audio_fade_d)
+    run(
+        f'ffmpeg -y -i output.mp4 '
+        f'-af "afade=t=out:st={audio_fade_st:.2f}:d={audio_fade_d:.2f}" '
+        f'-c:v copy -c:a aac -ar 44100 -ac 2 _output_fade.mp4'
+    )
+    run('mv _output_fade.mp4 output.mp4')
 
 
 # ═══════════════════════════════════════════════════════════════════════
