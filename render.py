@@ -876,8 +876,9 @@ def _default_subtitles(content_dur, segments=None):
 def apply_subtitles(input_video, output_video, subtitles, opts):
     """
     Incrust les sous-titres via FFmpeg drawtext.
-    Style : fond noir semi-transparent · texte blanc bold · centré bas.
-    Chaque sous-titre = drawtext avec enable='between(t,start,end)'.
+    Utilise textfile= pour éviter tout problème d'échappement (apostrophes,
+    virgules, points de suspension, etc.).
+    Style : bande noire semi-transparente · texte blanc bold centré · contour natif.
     """
     if not subtitles:
         run(f'cp "{input_video}" "{output_video}"')
@@ -886,18 +887,16 @@ def apply_subtitles(input_video, output_video, subtitles, opts):
     W_str, H_str = cfg(opts, "resolution").split("x")
     W_px  = int(W_str)
     H_px  = int(H_str)
-    fps   = cfg(opts, "fps")
     crf   = cfg(opts, "crf")
-    lb_h  = cfg(opts, "cinema_lb_h")   # hauteur letterbox (55-80px)
+    lb_h  = cfg(opts, "cinema_lb_h")
 
-    # Taille police : 4.2% de la hauteur vidéo — grand et lisible
+    # Taille police : 4.2% de la hauteur vidéo
     font_size = max(36, int(H_px * 0.042))
 
-    # Zone sous-titre : juste au-dessus de la letterbox basse
-    # y centré dans la zone : letterbox_bas → letterbox_bas + zone_h
-    zone_h   = int(H_px * 0.095)            # hauteur zone sous-titre ~9% H
-    band_y   = H_px - lb_h - zone_h         # y haut de la bande
-    text_y   = band_y + zone_h // 2         # y centre texte
+    # Zone sous-titre : au-dessus de la letterbox basse
+    zone_h = int(H_px * 0.095)
+    band_y = H_px - lb_h - zone_h
+    text_y = band_y + zone_h // 2
 
     try:
         vid_dur = duration(input_video)
@@ -912,62 +911,38 @@ def apply_subtitles(input_video, output_video, subtitles, opts):
         run(f'cp "{input_video}" "{output_video}"')
         return
 
-    # Construire les filtres drawtext + drawbox pour chaque sous-titre
-    # drawbox = bande noire semi-transparente derrière le texte
     vf_parts = []
 
-    for s in subtitles:
+    for i, s in enumerate(subtitles):
         t0   = s["t_start"]
         tend = t0 + s["t_dur"]
-        # Échapper le texte pour FFmpeg drawtext
-        txt  = (s["text"]
-                .replace("'",  "\\'")
-                .replace(":",  "\\:")
-                .replace(",",  "\\,")
-                .replace("[",  "\\[")
-                .replace("]",  "\\]"))
 
-        # Bande semi-transparente (drawbox)
+        # Écrire le texte dans un fichier temporaire — évite tout échappement
+        txt_path = f"_sub_{i}.txt"
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write(s["text"])
+
+        # Bande noire semi-transparente
         vf_parts.append(
             f"drawbox="
             f"x=0:y={band_y}:w={W_px}:h={zone_h}:"
             f"color=black@0.62:t=fill:"
             f"enable='between(t,{t0:.3f},{tend:.3f})'"
         )
-        # Texte principal blanc — centré
+
+        # Texte blanc avec bordercolor/borderw natif FFmpeg (contour propre, 0 filtre extra)
         vf_parts.append(
             f"drawtext="
             f"fontfile={FONT}:"
-            f"text='{txt}':"
+            f"textfile={txt_path}:"
             f"fontsize={font_size}:"
             f"fontcolor=white:"
+            f"bordercolor=black:"
+            f"borderw=3:"
             f"x=(w-text_w)/2:"
             f"y={text_y}-(text_h/2):"
             f"enable='between(t,{t0:.3f},{tend:.3f})'"
         )
-        # Ombre portée (légèrement décalée, noir semi-transparent)
-        vf_parts.append(
-            f"drawtext="
-            f"fontfile={FONT}:"
-            f"text='{txt}':"
-            f"fontsize={font_size}:"
-            f"fontcolor=black@0.55:"
-            f"x=(w-text_w)/2+2:"
-            f"y={text_y}-(text_h/2)+2:"
-            f"enable='between(t,{t0:.3f},{tend:.3f})'"
-        )
-        # Contour — même texte en noir pur, décalé 4 directions
-        for dx, dy in [(-2,0),(2,0),(0,-2),(0,2)]:
-            vf_parts.append(
-                f"drawtext="
-                f"fontfile={FONT}:"
-                f"text='{txt}':"
-                f"fontsize={font_size}:"
-                f"fontcolor=black@0.80:"
-                f"x=(w-text_w)/2+{dx}:"
-                f"y={text_y}-(text_h/2)+{dy}:"
-                f"enable='between(t,{t0:.3f},{tend:.3f})'"
-            )
 
     vf = ",".join(vf_parts)
 
