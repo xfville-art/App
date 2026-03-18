@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>ViraCut · LesCrados.Ai · v11</title>
+<title>ViraCut Studio</title>
 
 <style>
 :root{
@@ -558,6 +558,145 @@ input[type=password]::placeholder{color:var(--t3)}
 /* ─── SCROLLBAR ─── */
 ::-webkit-scrollbar{width:0;height:0}
 
+/* ═══ FIREBASE AUTH SETUP (App-12) ═══ */
+.setup-google-btn{
+  width:100%;padding:16px;border:none;border-radius:var(--r);
+  font-family:var(--fn);font-size:16px;font-weight:700;
+  cursor:pointer;margin-top:8px;
+  background:#fff;color:#1a1a1a;
+  display:flex;align-items:center;justify-content:center;gap:12px;
+  box-shadow:0 4px 20px rgba(0,0,0,.35);
+  transition:all .2s;
+}
+.setup-google-btn:active{transform:scale(.97);opacity:.9}
+.setup-google-btn svg{width:22px;height:22px;flex-shrink:0}
+.setup-divider{
+  display:flex;align-items:center;gap:12px;
+  margin:20px 0 16px;color:var(--t3);font-size:12px;font-weight:600;
+}
+.setup-divider::before,.setup-divider::after{
+  content:'';flex:1;height:1px;background:var(--sep);
+}
+.setup-config-toggle{
+  text-align:center;font-size:13px;color:var(--blue);
+  font-weight:600;cursor:pointer;margin-top:12px;
+  padding:8px;
+} 
+/* Header user zone */
+.hdr-user{
+  display:flex;align-items:center;gap:8px;cursor:pointer;
+}
+.hdr-avatar{
+  width:30px;height:30px;border-radius:50%;
+  background:linear-gradient(135deg,var(--red),var(--blue));
+  display:flex;align-items:center;justify-content:center;
+  font-size:13px;font-weight:800;color:#fff;
+  overflow:hidden;flex-shrink:0;
+}
+.hdr-avatar img{width:100%;height:100%;object-fit:cover}
+.hdr-credits{
+  display:flex;align-items:center;gap:5px;
+  padding:5px 10px;border-radius:20px;
+  background:var(--bg3);border:1px solid var(--sep);
+  font-size:12px;font-weight:700;color:var(--gold);
+  cursor:pointer;transition:all .15s;
+}
+.hdr-credits:active{background:var(--bg4)}
+.hdr-credits-icon{font-size:14px}
+
+/* Profile / Credits sheet */
+#profileSheet{display:none;position:fixed;inset:0;z-index:300;align-items:flex-end}
+#profileSheet.open{display:flex}
+.profile-scrim{position:absolute;inset:0;background:rgba(0,0,0,.65);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.profile-sheet{
+  position:relative;z-index:1;width:100%;max-width:430px;
+  background:var(--bg2);border-radius:24px 24px 0 0;
+  border:1px solid var(--sep);
+  padding:0 0 calc(var(--safe-bot)+24px);
+  animation:sheet-up .28s cubic-bezier(.16,1,.3,1);
+}
+.profile-handle{width:36px;height:4px;border-radius:4px;background:var(--sep);margin:12px auto 20px}
+
+/* User hero in profile */
+.profile-hero{
+  display:flex;align-items:center;gap:16px;
+  padding:0 20px 20px;border-bottom:1px solid var(--sep2);
+}
+.profile-avatar-lg{
+  width:60px;height:60px;border-radius:50%;
+  background:linear-gradient(135deg,var(--red),var(--blue));
+  display:flex;align-items:center;justify-content:center;
+  font-size:24px;font-weight:800;color:#fff;
+  overflow:hidden;flex-shrink:0;
+  border:2px solid var(--sep);
+}
+.profile-avatar-lg img{width:100%;height:100%;object-fit:cover}
+.profile-name{font-family:var(--fh);font-size:17px;font-weight:800;margin-bottom:3px}
+.profile-email{font-size:12px;color:var(--t3);margin-bottom:8px}
+.profile-since{font-size:11px;color:var(--t3)}
+
+/* Credits balance */
+.credits-balance{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:16px 20px;border-bottom:1px solid var(--sep2);
+}
+.credits-left{display:flex;flex-direction:column;gap:2px}
+.credits-label{font-size:11px;color:var(--t3);font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+.credits-amount{
+  font-family:var(--fh);font-size:36px;font-weight:800;
+  color:var(--gold);letter-spacing:-1px;line-height:1;
+}
+.credits-sub{font-size:12px;color:var(--t3);margin-top:2px}
+.credits-icon-big{font-size:44px;opacity:.7}
+
+/* Credit packs */
+.credits-packs{padding:14px 20px;border-bottom:1px solid var(--sep2)}
+.credits-packs-title{font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:10px}
+.pack-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.pack-btn{
+  display:flex;flex-direction:column;align-items:center;gap:3px;
+  padding:10px 6px;border-radius:12px;
+  background:var(--bg3);border:1.5px solid var(--sep);
+  cursor:pointer;transition:all .15s;
+}
+.pack-btn:active{transform:scale(.94)}
+.pack-btn.featured{background:rgba(245,200,66,.08);border-color:rgba(245,200,66,.3)}
+.pack-credits{font-family:var(--fh);font-size:18px;font-weight:800;color:var(--gold)}
+.pack-label{font-size:10px;color:var(--t3);font-weight:600}
+.pack-price{font-size:12px;font-weight:700;color:var(--t1)}
+.pack-badge{font-size:9px;font-weight:700;color:var(--green);background:rgba(52,211,153,.12);padding:2px 5px;border-radius:5px;margin-top:1px}
+
+/* Stats grid in profile */
+.profile-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:0;padding:4px 0}
+.profile-stat{padding:12px 20px;text-align:center;border-right:1px solid var(--sep2)}
+.profile-stat:last-child{border-right:none}
+.ps-val{font-family:var(--fh);font-size:20px;font-weight:800;color:var(--t1)}
+.ps-lbl{font-size:10px;color:var(--t3);font-weight:600;text-transform:uppercase;letter-spacing:.3px;margin-top:2px}
+
+/* Profile actions */
+.profile-actions{display:flex;flex-direction:column;gap:8px;padding:14px 20px 0}
+
+/* Credit badge on launch btn */
+.launch-credit-badge{
+  font-size:12px;font-weight:700;opacity:.8;margin-left:6px;
+}
+
+/* Stat crédits dans header tab0 */
+.stat-v.cr{color:var(--gold)}
+
+/* Config avancée toggle dans setup */
+.setup-advanced{
+  border:1px solid var(--sep);border-radius:var(--r);
+  overflow:hidden;margin-top:12px;background:var(--bg2);
+}
+.setup-adv-head{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 16px;cursor:pointer;
+}
+.setup-adv-title{font-size:13px;font-weight:600;color:var(--t2)}
+.setup-adv-body{border-top:1px solid var(--sep2)}
+
+
 /* ═══ LOGO EDITOR (App-11) ═══ */
 .logo-theme-grid{
   display:grid;grid-template-columns:repeat(5,1fr);gap:8px;
@@ -801,6 +940,11 @@ input[type=password]::placeholder{color:var(--t3)}
 .sb-sclose{background:var(--bg3);color:var(--t2)}
 
 </style>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 </head>
 <body>
 <div id="app">
@@ -812,8 +956,15 @@ input[type=password]::placeholder{color:var(--t3)}
       <div class="hdr-wordmark">Vira<span>Cut</span></div>
     </div>
     <div class="hdr-right">
-      <div class="pill" id="pill"><div class="pill-dot"></div><span id="pillTxt">Offline</span></div>
-      <button class="hdr-btn" id="logoutBtn" onclick="logout()">✕</button>
+      <div class="hdr-credits" id="creditsBtn" onclick="openProfile()" style="display:none">
+        <span class="hdr-credits-icon">⚡</span>
+        <span id="creditsDisplay">—</span>
+      </div>
+      <div class="pill" id="pill" style="display:none"><div class="pill-dot"></div><span id="pillTxt">Offline</span></div>
+      <div class="hdr-user" id="hdrUser" onclick="openProfile()" style="display:none">
+        <div class="hdr-avatar" id="hdrAvatar">?</div>
+      </div>
+      <button class="hdr-btn" id="logoutBtn" onclick="logout()" style="display:none">✕</button>
     </div>
   </header>
 
@@ -821,24 +972,46 @@ input[type=password]::placeholder{color:var(--t3)}
   <div id="viewSetup" style="flex:1;overflow-y:auto;padding:28px 20px calc(var(--safe-bot)+24px)">
     <div class="setup-hero">
       <div class="setup-hero-logo">🎞</div>
-      <h1>Vira<span>Cut</span> Studio</h1>
-      <p>Montage IA · Les Crados.Ai<br>GitHub Actions · FFmpeg · TikTok 9:16</p>
+      <h1>Vira<span>Cut</span></h1>
+      <p>Montage IA viral · TikTok 9:16<br>Propulsé par LesCrados.Ai</p>
     </div>
-    <div class="setup-card">
-      <div class="setup-field">
-        <label>GitHub Token</label>
-        <input type="password" id="tk" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+
+    <!-- Google Sign-In -->
+    <button class="setup-google-btn" id="googleSignInBtn" onclick="signInWithGoogle()">
+      <svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+      Continuer avec Google
+    </button>
+
+    <div class="setup-divider">ou mode expert</div>
+
+    <!-- Config avancée (token perso) — masquée par défaut -->
+    <div class="setup-advanced" id="setupAdvanced">
+      <div class="setup-adv-head" onclick="toggleSetupAdv()">
+        <div class="setup-adv-title">⚙️ Configurer mon propre repo GitHub</div>
+        <span id="setupAdvArrow" style="color:var(--t3);font-size:12px">▼</span>
       </div>
-      <div class="setup-field">
-        <label>Repository</label>
-        <input type="text" id="repoIn" value="xfville-art/App" placeholder="owner/repo">
-      </div>
-      <div class="setup-field">
-        <label>Clé Anthropic <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--t3)">(optionnel)</span></label>
-        <input type="password" id="anthropicKey" placeholder="sk-ant-api03-..." autocomplete="off">
+      <div class="setup-adv-body" id="setupAdvBody" style="display:none">
+        <div class="setup-card" style="border:none;border-radius:0;margin:0">
+          <div class="setup-field">
+            <label>GitHub Token</label>
+            <input type="password" id="tk" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+          </div>
+          <div class="setup-field">
+            <label>Repository</label>
+            <input type="text" id="repoIn" value="xfville-art/App" placeholder="owner/repo">
+          </div>
+          <div class="setup-field">
+            <label>Clé Anthropic <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--t3)">(optionnel)</span></label>
+            <input type="password" id="anthropicKey" placeholder="sk-ant-api03-..." autocomplete="off">
+          </div>
+        </div>
+        <div style="padding:0 16px 14px">
+          <button class="btn-login" onclick="init()" style="margin-top:0">Accéder →</button>
+        </div>
       </div>
     </div>
-    <button class="btn-login" onclick="init()">Accéder au Studio →</button>
+
+    <div id="setupError" style="margin-top:12px;font-size:13px;color:var(--red);text-align:center;font-weight:600;display:none"></div>
   </div>
 
   <!-- ─── STUDIO ─── -->
@@ -857,9 +1030,9 @@ input[type=password]::placeholder{color:var(--t3)}
 
       <!-- Stats -->
       <div class="stats">
-        <div class="stat"><span class="stat-v g" id="sRuns">—</span><div class="stat-l">Runs</div></div>
+        <div class="stat"><span class="stat-v cr" id="sCredits">—</span><div class="stat-l">Crédits</div></div>
+        <div class="stat"><span class="stat-v g" id="sRuns">—</span><div class="stat-l">Renders</div></div>
         <div class="stat"><span class="stat-v b" id="sDur">—</span><div class="stat-l">Dernier</div></div>
-        <div class="stat"><span class="stat-v r" id="sFail">—</span><div class="stat-l">Échecs</div></div>
       </div>
 
       <!-- Mode -->
@@ -947,7 +1120,7 @@ input[type=password]::placeholder{color:var(--t3)}
         <div class="chips" id="chips"></div>
       </div>
 
-      <button class="btn-launch" id="launchBtn" onclick="launch()" disabled>⚡ Lancer le rendu</button>
+      <button class="btn-launch" id="launchBtn" onclick="launch()" disabled>⚡ Lancer le rendu <span class="launch-credit-badge" id="launchCreditBadge"></span></button>
 
       <!-- Upload Progress Card -->
       <div class="card" id="uploadProgressCard" style="display:none;margin-top:12px">
@@ -1267,19 +1440,40 @@ function _goStudio(){
   document.getElementById('viewSetup').style.display='none';
   const vs=document.getElementById('viewStudio');vs.style.display='flex';vs.style.flexDirection='column';
   document.getElementById('repoEdit').value=repo;
-  document.getElementById('pill').classList.add('ok');
-  document.getElementById('pillTxt').textContent='ONLINE';
-  document.getElementById('logoutBtn').style.display='flex';
+
+  // Header user
+  const u=_currentUser;
+  if(u){
+    const av=document.getElementById('hdrAvatar');
+    if(av){
+      if(u.photoURL) av.innerHTML=`<img src="${u.photoURL}" alt="">`;
+      else av.textContent=(u.displayName||u.email||'?')[0].toUpperCase();
+    }
+    document.getElementById('hdrUser').style.display='flex';
+    document.getElementById('creditsBtn').style.display='flex';
+    document.getElementById('logoutBtn').style.display='none'; // géré dans profile sheet
+  } else {
+    // Mode expert (token perso) — afficher pill classique
+    document.getElementById('pill').style.display='flex';
+    document.getElementById('pill').classList.add('ok');
+    document.getElementById('pillTxt').textContent='ONLINE';
+    document.getElementById('logoutBtn').style.display='flex';
+  }
+
   initRanges();setMode('auto');loadStats();buildLogoThemeGrid();updateLogoPreview();
+  updateCreditsUI();
 }
 function logout(){
+  closeProfile();
+  // Firebase logout
+  if(_fbAuth&&_currentUser){
+    _fbAuth.signOut().catch(()=>{});
+    _currentUser=null;
+  }
+  // Token classique
   _store.del('vc_token');_store.del('vc_repo');_store.del('vc_anthropic');
   token='';anthropicApiKey='';
-  document.getElementById('pill').classList.remove('ok');
-  document.getElementById('pillTxt').textContent='Offline';
-  document.getElementById('logoutBtn').style.display='none';
-  document.getElementById('viewStudio').style.display='none';
-  document.getElementById('viewSetup').style.display='block';
+  showSetupView();
   document.getElementById('tk').value='';
 }
 
@@ -1593,6 +1787,12 @@ function renderUploadUI(filesState){
 }
 
 async function process(){
+  // Vérifier crédits si connecté Firebase
+  if(_currentUser && _userCredits <= 0){
+    showToast('⚡ Crédits insuffisants — recharge dans ton profil');
+    document.getElementById('launchBtn').disabled=false;
+    stopTimer();return;
+  }
   startTimer();
   const n=clips.length;
   const filesState=clips.map(c=>({name:c.file.name,size:c.file.size,pct:0,status:'idle'}));
@@ -1703,6 +1903,12 @@ async function monitor(){
         updateUI(100,'Rendu terminé','output.mp4 disponible dans les Artifacts',6,'✓');
         showResult(run);loadStats();
         document.getElementById('td0').classList.add('show');
+        // Consommer 1 crédit Firebase + sauvegarder historique
+        if(_currentUser){
+          consumeCredit().catch(e=>console.warn('consumeCredit:',e));
+          const vs=_lastViralScore||null;
+          saveRenderToHistory(run.id,run.html_url,currentMode,vs).catch(()=>{});
+        }
       }else{updateUI(0,'Erreur de rendu','Consulter les logs GitHub Actions',2,'✗');showRetry();}
     }else{
       const[stepIdx,stepLabel]=runPhaseToStep(run);
@@ -1717,6 +1923,7 @@ let _currentRunUrl='';
 let _currentRunId='';
 let _currentRunNum='';
 let _cachedVideoBlob=null;
+let _lastViralScore=null;
 let _cachedVideoUrl='';
 
 function showResult(run){
@@ -1944,6 +2151,7 @@ function showViraSkeleton(){
   document.getElementById('viraBody').innerHTML=`<div style="padding:16px"><div class="skel" style="height:14px;width:60%;margin-bottom:10px"></div><div class="skel" style="height:10px;width:90%;margin-bottom:6px"></div><div class="skel" style="height:10px;width:75%;margin-bottom:18px"></div><div class="skel" style="height:4px;width:100%;margin-bottom:7px;border-radius:4px"></div><div class="skel" style="height:4px;width:100%;margin-bottom:7px;border-radius:4px"></div><div class="skel" style="height:4px;width:100%;border-radius:4px"></div></div>`;
 }
 function showViraResult(data){
+  _lastViralScore=data.score||null;
   const card=document.getElementById('viraCard');card.classList.add('has-score');
   const[label,verdict]=getScoreLabel(data.score);const c=getScoreColor(data.score);
   document.getElementById('viraSubtitle').textContent=`Score global · ${clips.length} clip${clips.length>1?'s':''}`;
@@ -2177,6 +2385,253 @@ function sbOpen(idx){
 function sbClose(){document.getElementById('sbSheet').classList.remove('open');_sbIdx=-1;}
 
 
+
+/* ══════════════════════════════════════════════════════════════
+   FIREBASE ENGINE (App-12)
+   ══════════════════════════════════════════════════════════════
+   ⚠️  REMPLACE les valeurs firebaseConfig par les tiennes
+       Firebase Console → Paramètres projet → Vos applications
+   ══════════════════════════════════════════════════════════════ */
+
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBTgcbuOrkLGsUjWDBLXs-1k9_cNrvfDHE",
+  authDomain: "viracut-29189.firebaseapp.com",
+  projectId: "viracut-29189",
+  storageBucket: "viracut-29189.firebasestorage.app",
+  messagingSenderId: "539945681743",
+  appId: "1:539945681743:web:8d4384f16ac17aba3dfb3a",
+  measurementId: "G-FR6W5WERFZ"
+};
+
+// ── Init Firebase ─────────────────────────────────────────────
+let _fbApp=null, _fbAuth=null, _fbDb=null;
+let _currentUser=null;
+let _userCredits=0;
+let _userStats={renders:0,creditsUsed:0,lastRender:null};
+
+function initFirebase(){
+  try{
+    if(!firebase||!firebase.apps) return false;
+    if(firebase.apps.length===0){
+      _fbApp  = firebase.initializeApp(FIREBASE_CONFIG);
+    } else {
+      _fbApp = firebase.apps[0];
+    }
+    _fbAuth = firebase.auth();
+    _fbDb   = firebase.firestore();
+    // Persistence
+    _fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{});
+    // Auth state listener
+    _fbAuth.onAuthStateChanged(onAuthStateChanged);
+    return true;
+  }catch(e){
+    console.warn('Firebase init failed:', e.message);
+    return false;
+  }
+}
+
+async function onAuthStateChanged(user){
+  if(user){
+    _currentUser = user;
+    await loadUserProfile(user);
+    _goStudio();
+  } else {
+    _currentUser = null;
+    showSetupView();
+  }
+}
+
+async function signInWithGoogle(){
+  const btn = document.getElementById('googleSignInBtn');
+  if(btn){ btn.disabled=true; btn.textContent='Connexion…'; }
+  const errEl = document.getElementById('setupError');
+  if(errEl) errEl.style.display='none';
+  try{
+    const provider = new firebase.auth.GoogleAuthProvider();
+    provider.addScope('profile');
+    provider.addScope('email');
+    await _fbAuth.signInWithPopup(provider);
+    // onAuthStateChanged takes it from here
+  }catch(e){
+    if(btn){ btn.disabled=false; btn.innerHTML='<svg viewBox="0 0 24 24" style="width:22px;height:22px"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>Continuer avec Google'; }
+    if(e.code !== 'auth/popup-closed-by-user'){
+      if(errEl){ errEl.textContent='Erreur : '+e.message; errEl.style.display='block'; }
+    }
+  }
+}
+
+// ── Firestore user profile ────────────────────────────────────
+async function loadUserProfile(user){
+  if(!_fbDb) return;
+  const ref = _fbDb.collection('users').doc(user.uid);
+  try{
+    const snap = await ref.get();
+    if(!snap.exists){
+      // Nouveau user — créer le profil avec 3 crédits offerts
+      const profile = {
+        uid:          user.uid,
+        email:        user.email||'',
+        displayName:  user.displayName||'',
+        photoURL:     user.photoURL||'',
+        credits:      3,
+        renders:      0,
+        creditsUsed:  0,
+        createdAt:    firebase.firestore.FieldValue.serverTimestamp(),
+        lastRender:   null,
+      };
+      await ref.set(profile);
+      _userCredits = 3;
+      _userStats = {renders:0, creditsUsed:0, lastRender:null};
+      // Afficher message bienvenue
+      setTimeout(()=>showToast('🎁 3 crédits offerts pour commencer !'), 1200);
+    } else {
+      const data = snap.data();
+      _userCredits = data.credits||0;
+      _userStats = {
+        renders:     data.renders||0,
+        creditsUsed: data.creditsUsed||0,
+        lastRender:  data.lastRender||null,
+      };
+    }
+    updateCreditsUI();
+  }catch(e){
+    console.warn('loadUserProfile error:', e);
+  }
+}
+
+async function consumeCredit(){
+  if(!_fbDb||!_currentUser) throw new Error('Non connecté');
+  if(_userCredits <= 0) throw new Error('Crédits insuffisants');
+  const ref = _fbDb.collection('users').doc(_currentUser.uid);
+  await ref.update({
+    credits:     firebase.firestore.FieldValue.increment(-1),
+    renders:     firebase.firestore.FieldValue.increment(1),
+    creditsUsed: firebase.firestore.FieldValue.increment(1),
+    lastRender:  firebase.firestore.FieldValue.serverTimestamp(),
+  });
+  _userCredits = Math.max(0, _userCredits - 1);
+  _userStats.renders++;
+  _userStats.creditsUsed++;
+  updateCreditsUI();
+}
+
+async function saveRenderToHistory(runId, runUrl, mode, score){
+  if(!_fbDb||!_currentUser) return;
+  try{
+    await _fbDb
+      .collection('users').doc(_currentUser.uid)
+      .collection('renders').add({
+        runId:     String(runId),
+        runUrl:    runUrl||'',
+        mode:      mode||'auto',
+        score:     score||null,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+  }catch(e){ console.warn('saveRenderToHistory:', e); }
+}
+
+// ── UI updates ────────────────────────────────────────────────
+function updateCreditsUI(){
+  const cd = document.getElementById('creditsDisplay');
+  const sc = document.getElementById('sCredits');
+  const cb = document.getElementById('launchCreditBadge');
+  const cv = String(_userCredits);
+  if(cd) cd.textContent = cv;
+  if(sc) sc.textContent = cv;
+  if(cb) cb.textContent = _userCredits > 0 ? '(-1 crédit)' : '(aucun crédit)';
+
+  const lb = document.getElementById('launchBtn');
+  if(lb){
+    lb.disabled = (clips.length===0 || _userCredits<=0);
+    if(_userCredits<=0 && clips.length>0){
+      lb.style.opacity='.5';
+      lb.style.background='var(--bg4)';
+    } else {
+      lb.style.opacity='';
+      lb.style.background='';
+    }
+  }
+}
+
+// ── Profile sheet ─────────────────────────────────────────────
+function openProfile(){
+  if(!_currentUser) return;
+  const u = _currentUser;
+  // Avatar
+  ['profileAvatarLg'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(!el) return;
+    if(u.photoURL){
+      el.innerHTML=`<img src="${u.photoURL}" alt="">`;
+    } else {
+      el.textContent=(u.displayName||u.email||'?')[0].toUpperCase();
+    }
+  });
+  const pn = document.getElementById('profileName');
+  if(pn) pn.textContent = u.displayName||u.email||'Utilisateur';
+  const pe = document.getElementById('profileEmail');
+  if(pe) pe.textContent = u.email||'';
+  const ps = document.getElementById('profileSince');
+  if(ps && u.metadata?.creationTime){
+    ps.textContent = 'Membre depuis '+new Date(u.metadata.creationTime).toLocaleDateString('fr-FR',{month:'long',year:'numeric'});
+  }
+  const pc = document.getElementById('profileCredits');
+  if(pc) pc.textContent = String(_userCredits);
+  const pr = document.getElementById('psRenders');
+  if(pr) pr.textContent = String(_userStats.renders||0);
+  const pcu = document.getElementById('psCreditsUsed');
+  if(pcu) pcu.textContent = String(_userStats.creditsUsed||0);
+  const pst = document.getElementById('psStreak');
+  if(pst && _userStats.lastRender?.toDate){
+    pst.textContent = _userStats.lastRender.toDate().toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'});
+  } else if(pst){ pst.textContent='—'; }
+
+  document.getElementById('profileSheet').classList.add('open');
+}
+function closeProfile(){
+  document.getElementById('profileSheet').classList.remove('open');
+}
+
+function buyPack(credits, price){
+  // TODO: intégrer Google Play Billing API via TWA
+  closeProfile();
+  showToast(`💳 Achat ${credits} crédits (${price}€) — Paiement Google Play bientôt disponible`);
+}
+
+// ── Toast notification ────────────────────────────────────────
+function showToast(msg, dur=3500){
+  let t=document.getElementById('toastEl');
+  if(!t){
+    t=document.createElement('div');
+    t.id='toastEl';
+    t.style.cssText='position:fixed;bottom:calc(var(--safe-bot,0px) + 80px);left:50%;transform:translateX(-50%);background:var(--bg2);color:var(--t1);padding:10px 18px;border-radius:20px;font-size:13px;font-weight:600;border:1px solid var(--sep);z-index:500;max-width:320px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.5);transition:opacity .3s;pointer-events:none';
+    document.body.appendChild(t);
+  }
+  t.textContent=msg;t.style.opacity='1';
+  clearTimeout(t._tid);
+  t._tid=setTimeout(()=>{t.style.opacity='0';},dur);
+}
+
+// ── Toggle setup advanced ─────────────────────────────────────
+function toggleSetupAdv(){
+  const body=document.getElementById('setupAdvBody');
+  const arrow=document.getElementById('setupAdvArrow');
+  if(!body)return;
+  const open=body.style.display!=='none';
+  body.style.display=open?'none':'block';
+  if(arrow)arrow.textContent=open?'▼':'▲';
+}
+
+// ── View helpers ──────────────────────────────────────────────
+function showSetupView(){
+  document.getElementById('viewStudio').style.display='none';
+  document.getElementById('viewSetup').style.display='block';
+  document.getElementById('creditsBtn').style.display='none';
+  document.getElementById('hdrUser').style.display='none';
+  document.getElementById('logoutBtn').style.display='none';
+  document.getElementById('pill').style.display='none';
+}
+
 /* ══ LOGO EDITOR ENGINE (App-11) ══ */
 
 const LOGO_THEMES = [
@@ -2333,6 +2788,19 @@ function getLogoConfig(){
 /* ══ INIT ══ */
 initRanges();
 renderSteps();
+// Init Firebase (si config renseignée)
+if(FIREBASE_CONFIG.apiKey !== 'VOTRE_API_KEY'){
+  initFirebase();
+} else {
+  // Mode dev sans Firebase — fallback token classique
+  (function(){
+    try{
+      const t=_store.get('vc_token'),r=_store.get('vc_repo'),a=_store.get('vc_anthropic');
+      if(t){token=t;if(r){repo=r;const ri=document.getElementById('repoIn');if(ri)ri.value=r;}if(a)anthropicApiKey=a;_goStudio();}
+      else{if(r){const ri=document.getElementById('repoIn');if(ri)ri.value=r;}}
+    }catch(e){}
+  })();
+}
 /* Fonts non-bloquant */
 (function(){try{var l=document.createElement('link');l.rel='stylesheet';l.media='print';l.href='https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&display=swap';l.onload=function(){this.media='all';};document.head.appendChild(l);}catch(e){}})();
 
@@ -2373,6 +2841,11 @@ window.histDownload=histDownload;
 window.buildStoryboard=buildStoryboard;
 window.selectLogoTheme=selectLogoTheme;
 window.updateLogoPreview=updateLogoPreview;
+window.signInWithGoogle=signInWithGoogle;
+window.openProfile=openProfile;
+window.closeProfile=closeProfile;
+window.buyPack=buyPack;
+window.toggleSetupAdv=toggleSetupAdv;
 
 });
 </script>
@@ -2394,6 +2867,82 @@ window.updateLogoPreview=updateLogoPreview;
         <button class="btn btn-ghost" onclick="doArtifactPage()">
           <span>↗</span><span>Ouvrir sur GitHub</span>
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── PROFILE SHEET ─── -->
+  <div id="profileSheet">
+    <div class="profile-scrim" onclick="closeProfile()"></div>
+    <div class="profile-sheet">
+      <div class="profile-handle"></div>
+
+      <!-- Hero -->
+      <div class="profile-hero">
+        <div class="profile-avatar-lg" id="profileAvatarLg">?</div>
+        <div>
+          <div class="profile-name" id="profileName">—</div>
+          <div class="profile-email" id="profileEmail">—</div>
+          <div class="profile-since" id="profileSince">Membre depuis —</div>
+        </div>
+      </div>
+
+      <!-- Solde crédits -->
+      <div class="credits-balance">
+        <div class="credits-left">
+          <div class="credits-label">Crédits disponibles</div>
+          <div class="credits-amount" id="profileCredits">—</div>
+          <div class="credits-sub">1 crédit = 1 render complet</div>
+        </div>
+        <div class="credits-icon-big">⚡</div>
+      </div>
+
+      <!-- Packs -->
+      <div class="credits-packs">
+        <div class="credits-packs-title">Recharger des crédits</div>
+        <div class="pack-grid">
+          <div class="pack-btn" onclick="buyPack(10,'0.99')">
+            <div class="pack-credits">10</div>
+            <div class="pack-label">crédits</div>
+            <div class="pack-price">0,99€</div>
+          </div>
+          <div class="pack-btn featured" onclick="buyPack(50,'3.99')">
+            <div class="pack-credits">50</div>
+            <div class="pack-label">crédits</div>
+            <div class="pack-price">3,99€</div>
+            <div class="pack-badge">⭐ Populaire</div>
+          </div>
+          <div class="pack-btn" onclick="buyPack(200,'9.99')">
+            <div class="pack-credits">200</div>
+            <div class="pack-label">crédits</div>
+            <div class="pack-price">9,99€</div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--t3);margin-top:8px;text-align:center">
+          Paiement sécurisé via Google Play · 3 crédits offerts à l'inscription
+        </div>
+      </div>
+
+      <!-- Stats perso -->
+      <div class="profile-stats">
+        <div class="profile-stat">
+          <div class="ps-val" id="psRenders">0</div>
+          <div class="ps-lbl">Renders</div>
+        </div>
+        <div class="profile-stat">
+          <div class="ps-val" id="psCreditsUsed">0</div>
+          <div class="ps-lbl">Utilisés</div>
+        </div>
+        <div class="profile-stat">
+          <div class="ps-val" id="psStreak">—</div>
+          <div class="ps-lbl">Dernière activité</div>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="profile-actions">
+        <button class="btn btn-ghost" onclick="closeProfile()">Fermer</button>
+        <button class="btn" style="background:var(--red2);color:var(--red);border:1px solid rgba(255,59,92,.2)" onclick="logout()">Se déconnecter</button>
       </div>
     </div>
   </div>
