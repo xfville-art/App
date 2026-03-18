@@ -1,5 +1,5 @@
 """
-render.py — ViraCut Studio v12  ★ LesCrados.Ai Edition ★
+render.py — ViraCut Studio v13  ★ LesCrados.Ai Edition ★
 ═════════════════════════════════════════════════════════
 v12 : SMART CUT ENGINE
      — motion_start : détection du 1er frame d'action réelle (skip intro statique)
@@ -233,81 +233,118 @@ def build_logo_splash(out, opts):
     Wi, Hi = int(W), int(H)
     dur  = 2.5
 
-    # Tailles basees sur Hi — CRADOS dominant
-    margin    = int(Wi * 0.06)          # 6% marge chaque cote
-    max_w     = Wi - margin * 2
-    # Impact ~ 0.76 par caractere — coefficient calibre empiriquement
-    crados_sz = int(max_w / (len("CRADOS") * 0.76))
-    # (pas de min supplementaire — max_w/0.76 garantit deja le fit)
-    les_sz    = int(crados_sz * 0.44)
-    ai_sz     = int(crados_sz * 0.48)
-    gap1      = int(crados_sz * 0.06)
-    gap2      = int(crados_sz * 0.05)
-    total_h   = les_sz + gap1 + crados_sz + gap2 + ai_sz
-    block_top = (Hi - total_h) // 2
-    les_y    = block_top
-    crados_y = block_top + les_sz + gap1
-    ai_y     = block_top + les_sz + gap1 + crados_sz + gap2
+    # ── Paramètres logo depuis opts (App-11) ──────────────────────────
+    logo_cfg = opts.get("logo", {})
+    l1_txt   = str(logo_cfg.get("l1", "LES")).strip().upper()     or "LES"
+    l2_txt   = str(logo_cfg.get("l2", "CRADOS")).strip().upper()  or "CRADOS"
+    l3_txt   = str(logo_cfg.get("l3", ".Ai")).strip()             or ".Ai"
+    slogan   = str(logo_cfg.get("slogan", "")).strip()
+    theme_id = str(logo_cfg.get("theme", "crados")).lower()
 
-    # Fond : geq radial simple — halo rouge stable
-    cx = Wi // 2; cy = Hi // 2
-    hr = int(min(Wi, Hi) * 0.55)
-    cx_str = str(Wi // 2); cy_str = str(Hi // 2); hr_str = str(int(min(Wi, Hi) * 0.55))
+    # Thèmes : (halo_r, halo_g, halo_b, accent_hex)
+    THEMES = {
+        "crados":    (140,  5,   8, "#FF2442"),
+        "cyber":     (  0, 80, 140, "#00D4FF"),
+        "collector": (120, 90,   0, "#F5C842"),
+        "matrix":    (  0,120,  60, "#34D399"),
+        "gothic":    ( 60,  0, 140, "#9B59FF"),
+    }
+    hr_c, hg_c, hb_c, accent = THEMES.get(theme_id, THEMES["crados"])
+
+    # ── Layout ────────────────────────────────────────────────────────
+    margin   = int(Wi * 0.06)
+    max_w    = Wi - margin * 2
+
+    # L2 dominant : taille auto pour tenir dans max_w
+    l2_sz  = max(24, int(max_w / (max(len(l2_txt), 1) * 0.76)))
+    l1_sz  = int(l2_sz * 0.44)
+    l3_sz  = int(l2_sz * 0.48)
+    sl_sz  = int(l2_sz * 0.28) if slogan else 0
+    gap    = int(l2_sz * 0.06)
+    line_h = max(3, int(l2_sz * 0.022))
+    line_w = int(max_w * 0.88)
+
+    total_h = l1_sz + gap + l2_sz + gap + line_h + gap + l3_sz
+    if slogan:
+        total_h += gap + sl_sz
+
+    block_top = (Hi - total_h) // 2
+    y_l1   = block_top
+    y_l2   = y_l1 + l1_sz + gap
+    y_line = y_l2 + l2_sz + gap
+    y_l3   = y_line + line_h + gap
+    y_sl   = y_l3 + l3_sz + gap  if slogan else 0
+
+    line_x = (Wi - line_w) // 2
+
+    # ── Fond radial thématique ────────────────────────────────────────
+    cx_s  = str(Wi // 2); cy_s = str(Hi // 2)
+    hr_s  = str(int(min(Wi, Hi) * 0.55))
     bg_filter = (
         "geq="
-        "r='clip(140*max(0,1-sqrt((X-"+cx_str+")*(X-"+cx_str+")+(Y-"+cy_str+")*(Y-"+cy_str+"))/"+hr_str+"),0,255)':"
-        "g='clip(5*max(0,1-sqrt((X-"+cx_str+")*(X-"+cx_str+")+(Y-"+cy_str+")*(Y-"+cy_str+"))/"+hr_str+"),0,255)':"
-        "b='clip(8*max(0,1-sqrt((X-"+cx_str+")*(X-"+cx_str+")+(Y-"+cy_str+")*(Y-"+cy_str+"))/"+hr_str+"),0,255)'"
+        f"r='clip({hr_c}*max(0,1-sqrt((X-{cx_s})*(X-{cx_s})+(Y-{cy_s})*(Y-{cy_s}))/{hr_s}),0,255)':"
+        f"g='clip({hg_c}*max(0,1-sqrt((X-{cx_s})*(X-{cx_s})+(Y-{cy_s})*(Y-{cy_s}))/{hr_s}),0,255)':"
+        f"b='clip({hb_c}*max(0,1-sqrt((X-{cx_s})*(X-{cx_s})+(Y-{cy_s})*(Y-{cy_s}))/{hr_s}),0,255)'"
     )
 
-    # LES — fade in 0→0.3s
-    dt_les = (
-        f"drawtext=fontfile={FONT}:text='LES':fontsize={les_sz}:"
-        f"fontcolor=white:x=(w-text_w)/2:y={les_y}:"
+    # ── Textes animés ─────────────────────────────────────────────────
+    # L1 — fade in 0→0.3s
+    dt_l1 = (
+        f"drawtext=fontfile={FONT}:text='{l1_txt}':fontsize={l1_sz}:"
+        f"fontcolor=white:x=(w-text_w)/2:y={y_l1}:"
         f"alpha='if(lt(t,0.3),t/0.3,1)':enable='gte(t,0)'"
     )
-
-    # CRADOS — fade in 0.2→0.5s
-    dt_crad = (
-        f"drawtext=fontfile={FONT}:text='CRADOS':fontsize={crados_sz}:"
-        f"fontcolor=white:x=(w-text_w)/2:y={crados_y}:"
+    # L2 — fade in 0.2→0.5s, blanc
+    dt_l2 = (
+        f"drawtext=fontfile={FONT}:text='{l2_txt}':fontsize={l2_sz}:"
+        f"fontcolor=white:x=(w-text_w)/2:y={y_l2}:"
         f"alpha='if(lt(t,0.2),0,if(lt(t,0.5),(t-0.2)/0.3,1))':enable='gte(t,0.2)'"
     )
-
-    # .Ai — fade in 0.5→0.8s, rouge
-    dt_ai = (
-        f"drawtext=fontfile={FONT}:text='.Ai':fontsize={ai_sz}:"
-        f"fontcolor=#FF2442:x=(w-text_w)/2:y={ai_y}:"
+    # L3 — fade in 0.5→0.8s, couleur accent
+    dt_l3 = (
+        f"drawtext=fontfile={FONT}:text='{l3_txt}':fontsize={l3_sz}:"
+        f"fontcolor={accent}:x=(w-text_w)/2:y={y_l3}:"
         f"alpha='if(lt(t,0.5),0,if(lt(t,0.8),(t-0.5)/0.3,1))':enable='gte(t,0.5)'"
     )
-
-    # Ligne rouge statique sous CRADOS
-    line_h = max(3, int(crados_sz * 0.018))
-    line_w = int(max_w * 0.90)
-    line_x = (Wi - line_w) // 2
-    line_y = crados_y + crados_sz + int(crados_sz * 0.025)
+    # Ligne accent sous L2
     dt_line = (
-        f"drawbox=x={line_x}:y={line_y}:w={line_w}:h={line_h}:"
-        f"color=#FF2442@0.9:t=fill:enable='gte(t,0.6)'"
+        f"drawbox=x={line_x}:y={y_line}:w={line_w}:h={line_h}:"
+        f"color={accent}@0.9:t=fill:enable='gte(t,0.6)'"
     )
-
-    # Scanlines : 1 ligne noire tous les 4px — look CRT/carte collector
-    # step=4 pour limiter la longueur de la chaine de filtres (~16k chars)
-    scanlines = []
-    for _sy in range(0, Hi, 4):
-        scanlines.append(
-            "drawbox=x=0:y=" + str(_sy) + ":w=" + str(Wi) + ":h=1:color=black@0.22:t=fill"
+    # Slogan optionnel — fade in 0.7→1.0s
+    dt_slogan_parts = []
+    if slogan:
+        # Tronquer si trop long
+        max_chars = max(1, int(max_w / (sl_sz * 0.55)))
+        sl_disp   = slogan[:max_chars] + ("…" if len(slogan) > max_chars else "")
+        dt_slogan_parts.append(
+            f"drawtext=fontfile={FONT}:text='{sl_disp}':fontsize={sl_sz}:"
+            f"fontcolor={accent}@0.75:x=(w-text_w)/2:y={y_sl}:"
+            f"alpha='if(lt(t,0.7),0,if(lt(t,1.0),(t-0.7)/0.3,1))':enable='gte(t,0.7)'"
         )
 
-    # Vignette native FFmpeg
+    # Scanlines CRT
+    scanlines = [
+        "drawbox=x=0:y=" + str(_sy) + ":w=" + str(Wi) + ":h=1:color=black@0.22:t=fill"
+        for _sy in range(0, Hi, 4)
+    ]
+
     vignette_f = "vignette=PI/3.5:eval=frame"
 
-    vf_parts = [bg_filter, dt_les, dt_crad, dt_ai, dt_line] + scanlines + [
-        vignette_f,
-        "fade=t=in:st=0:d=0.2",
-        f"fade=t=out:st={dur-0.4:.2f}:d=0.4",
-    ]
+    vf_parts = (
+        [bg_filter, dt_l1, dt_l2, dt_l3, dt_line]
+        + dt_slogan_parts
+        + scanlines
+        + [
+            vignette_f,
+            "fade=t=in:st=0:d=0.2",
+            f"fade=t=out:st={dur-0.4:.2f}:d=0.4",
+        ]
+    )
     vf = ",".join(vf_parts)
+
+    print(f"  [Logo] thème={theme_id}  L1={l1_txt}  L2={l2_txt}  L3={l3_txt}"
+          + (f"  slogan='{slogan}'" if slogan else ""))
 
     run(
         f'ffmpeg -y -f lavfi -i "color=c=black:size={W}x{H}:rate={fps}" '
@@ -1005,7 +1042,7 @@ def start():
         sys.exit(1)
 
     print("=" * 60)
-    print("  ViraCut v12 -- LesCrados.Ai  [SMART CUT ENGINE]")
+    print("  ViraCut v13 -- LesCrados.Ai  [LOGO CUSTOM ENGINE]")
     print("=" * 60)
     print(f"  Clips recus        : {len(clips_raw)}")
     print(f"  Smart Cut          : {cfg(opts,'smart_cut')}")
