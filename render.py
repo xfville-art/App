@@ -434,22 +434,30 @@ def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts, role="core"):
     cont        = cfg(opts, "grade_contrast")
     bri         = cfg(opts, "grade_brightness")
 
-    # ── Smart Cut IN : skip intro statique ───────────────────────────
-    if use_smart:
+    # ── Smart Cut IN : skip intro statique (HOOK seulement) ─────────
+    # Sur CORE et PUNCH : on ne skippe jamais — le début peut contenir
+    # une scène virale cruciale (recrachement, révélation, réaction).
+    if use_smart and role == "hook":
         in_pt, in_lbl = detect_motion_start(src, scene_thr=scene_thr, max_skip=max_skip)
     else:
-        in_pt, in_lbl = 0.0, "smart_off"
+        in_pt, in_lbl = 0.0, "no_skip"
 
     clip_max = max(src_dur - in_pt, 1.0)
 
-    # ── Smart Cut OUT : si role=punch, s'assurer d'inclure le pic ────
-    if use_smart and role == "punch":
-        peak = detect_punchline_peak(src, in_pt=in_pt, scene_thr=scene_thr * 0.85)
+    # ── Smart Cut OUT : inclure la punchline même si elle dépasse ────
+    # S'applique à PUNCH et CORE (le core peut contenir la scène virale)
+    # Seuil abaissé à 0.03 pour détecter les mouvements lents (clips AI)
+    if use_smart and role in ("punch", "core"):
+        peak = detect_punchline_peak(src, in_pt=in_pt, scene_thr=max(0.03, scene_thr * 0.5))
         if peak is not None:
-            # On prend au minimum jusqu'au pic + 0.6s de résolution
-            min_dur_for_peak = peak + 0.6
-            actual = min(max(target_dur, min_dur_for_peak), clip_max)
-            out_lbl = f"peak_included@{peak:.2f}s"
+            min_dur_for_peak = peak + 0.8
+            if min_dur_for_peak > target_dur:
+                actual = min(min_dur_for_peak, clip_max)
+                out_lbl = f"peak_extended@{peak:.2f}s"
+                print(f"      punchline incluse → durée {target_dur:.2f}s → {actual:.2f}s")
+            else:
+                actual = min(target_dur, clip_max)
+                out_lbl = f"peak_ok@{peak:.2f}s"
         else:
             actual = min(target_dur, clip_max)
             out_lbl = "no_peak"
