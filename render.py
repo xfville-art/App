@@ -235,11 +235,15 @@ def build_logo_splash(out, opts):
 
     # ── Paramètres logo depuis opts (App-11) ──────────────────────────
     logo_cfg = opts.get("logo", {})
-    l1_txt   = str(logo_cfg.get("l1", "LES")).strip().upper()     or "LES"
-    l2_txt   = str(logo_cfg.get("l2", "CRADOS")).strip().upper()  or "CRADOS"
+    l1_raw   = str(logo_cfg.get("l1", "LES")).strip().upper()     or "LES"
+    l2_raw   = str(logo_cfg.get("l2", "CRADOS")).strip().upper()  or "CRADOS"
     l3_txt   = str(logo_cfg.get("l3", ".Ai")).strip()             or ".Ai"
     slogan   = str(logo_cfg.get("slogan", "")).strip()
     theme_id = str(logo_cfg.get("theme", "crados")).lower()
+
+    # Cap L1/L2 à 14 chars max pour éviter débordement sur tous formats
+    l1_txt = l1_raw[:14] + ("…" if len(l1_raw) > 14 else "")
+    l2_txt = l2_raw[:14] + ("…" if len(l2_raw) > 14 else "")
 
     # Thèmes : (halo_r, halo_g, halo_b, accent_hex)
     THEMES = {
@@ -255,8 +259,11 @@ def build_logo_splash(out, opts):
     margin   = int(Wi * 0.06)
     max_w    = Wi - margin * 2
 
-    # L2 dominant : taille auto pour tenir dans max_w
-    l2_sz  = max(24, int(max_w / (max(len(l2_txt), 1) * 0.76)))
+    # L2 dominant : taille auto pour tenir dans max_w — facteur 0.65 (conservateur)
+    # On prend le max entre L1 et L2 pour dimensionner sur le plus long
+    max_len  = max(len(l1_txt), len(l2_txt), 1)
+    l2_sz  = max(24, int(max_w / (max_len * 0.65)))
+    l2_sz  = min(l2_sz, int(max_w / 5))  # plancher absolu : 5 chars min visibles
     l1_sz  = int(l2_sz * 0.44)
     l3_sz  = int(l2_sz * 0.48)
     sl_sz  = int(l2_sz * 0.28) if slogan else 0
@@ -930,6 +937,10 @@ def subtitle_analysis(segments, opts, vira_result):
         txt  = str(s.get("text", "")).strip()[:28]
         if not txt:
             continue
+        # Fix 3 : exclure tout sous-titre qui contient le handle (double watermark)
+        if "@lescrados" in txt.lower() or "@les" in txt.lower():
+            print(f'    📝 Sous-titre "{txt}" exclu (handle détecté)')
+            continue
         t0   = float(s.get("t_start", 0.5))
         tdur = float(s.get("t_dur",   2.0))
         # Anti-chevauchement
@@ -1100,12 +1111,16 @@ def start():
 
         map_v = f"-map 0:{h264_idx}" if h264_idx is not None else "-map 0:v:0"
 
-        # Re-encode : scale 9:16 + pad + GOP propre
+        # Re-encode : scale crop-fill 9:16 (pas de pad → pas de bandes grises/noires)
+        # scale=W*sar:H conserve les proportions en over-scaling puis crop centré
+        vf_scale = (
+            f"scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={W}:{H},setsar=1,fps={fps}"
+        )
         if audio_streams:
             run(
                 f'ffmpeg -y -i "{raw}" {map_v} -map 0:a:0 '
-                f'-vf "scale={W}:{H}:force_original_aspect_ratio=decrease:flags=lanczos,'
-                f'pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps={fps}" '
+                f'-vf "{vf_scale}" '
                 f'-c:v libx264 -crf {crf} -preset fast -pix_fmt yuv420p '
                 f'-x264opts "keyint={fps}:no-scenecut" '
                 f'-bf 0 -c:a aac -ar 44100 -ac 2 "{p}"'
@@ -1114,8 +1129,7 @@ def start():
             # Source sans audio → générer silence
             run(
                 f'ffmpeg -y -i "{raw}" -f lavfi -i "anullsrc=r=44100:cl=stereo" {map_v} -map 1:a '
-                f'-vf "scale={W}:{H}:force_original_aspect_ratio=decrease:flags=lanczos,'
-                f'pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps={fps}" '
+                f'-vf "{vf_scale}" '
                 f'-c:v libx264 -crf {crf} -preset fast -pix_fmt yuv420p '
                 f'-x264opts "keyint={fps}:no-scenecut" '
                 f'-bf 0 -c:a aac -ar 44100 -ac 2 -shortest "{p}"'
