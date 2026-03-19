@@ -329,14 +329,21 @@ def build_logo_splash(out, opts):
         for _sy in range(0, Hi, 4)
     ]
 
-    vignette_f = "vignette=PI/3.5:eval=frame"
+    # Vignette simulée par 4 bandes drawbox — stable sur toutes sources lavfi
+    vig_size = int(min(Wi, Hi) * 0.18)
+    vignette_parts = [
+        f"drawbox=x=0:y=0:w={Wi}:h={vig_size}:color=black@0.55:t=fill",
+        f"drawbox=x=0:y={Hi-vig_size}:w={Wi}:h={vig_size}:color=black@0.55:t=fill",
+        f"drawbox=x=0:y=0:w={vig_size}:h={Hi}:color=black@0.40:t=fill",
+        f"drawbox=x={Wi-vig_size}:y=0:w={vig_size}:h={Hi}:color=black@0.40:t=fill",
+    ]
 
     vf_parts = (
         [bg_filter, dt_l1, dt_l2, dt_l3, dt_line]
         + dt_slogan_parts
         + scanlines
+        + vignette_parts
         + [
-            vignette_f,
             "fade=t=in:st=0:d=0.2",
             f"fade=t=out:st={dur-0.4:.2f}:d=0.4",
         ]
@@ -617,9 +624,16 @@ def build_cinema_overlay_no_text(opts):
         f"drawbox=y=0:h={lb_h}:c=black@1:t=fill,"
         f"drawbox=y={Hi - lb_h}:h={lb_h}:c=black@1:t=fill"
     )
-    vignette = "vignette=PI/4.5:eval=frame"
+    # Vignette stable sans filtre vignette= (non dispo sur certains builds GitHub)
+    vig_s2 = int(min(Wi, Hi) * 0.15)
+    vig2 = (
+        f"drawbox=x=0:y=0:w={Wi}:h={vig_s2}:color=black@0.45:t=fill,"
+        f"drawbox=x=0:y={Hi-vig_s2}:w={Wi}:h={vig_s2}:color=black@0.45:t=fill,"
+        f"drawbox=x=0:y=0:w={vig_s2}:h={Hi}:color=black@0.30:t=fill,"
+        f"drawbox=x={Wi-vig_s2}:y=0:w={vig_s2}:h={Hi}:color=black@0.30:t=fill"
+    )
     fades = f"fade=t=in:st=0:d={fade_in_d},fade=t=out:st={fade_out_st:.2f}:d={fade_out_d}"
-    vf = f"{lb},{vignette},{fades}"
+    vf = f"{lb},{vig2},{fades}"
 
     # Pas de fade audio ici — on le fait sur output.mp4 final (après logo)
     run(
