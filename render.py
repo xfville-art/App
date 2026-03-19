@@ -1,7 +1,7 @@
 """
 render.py — ViraCut Studio v14  ★ LesCrados.Ai Edition ★
 ═════════════════════════════════════════════════════════
-v14.2 : FIX CRITICAL - SCANLINE OPTIMIZATION + AUTO-DETECT RESTORED
+v14.3 : FIX SCANLINES + ROBUST FILE DETECTION
 """
 import json, base64, os, subprocess, sys, re, urllib.request, urllib.error
 
@@ -32,7 +32,7 @@ def run(cmd):
     return r
 
 # ═══════════════════════════════════════════════════════════════════════
-# LOGO SPLASH (LA FONCTION OPTIMISÉE)
+# LOGO SPLASH (OPTIMISÉ)
 # ═══════════════════════════════════════════════════════════════════════
 
 def build_logo_splash(output, opts):
@@ -55,7 +55,7 @@ def build_logo_splash(output, opts):
         delay = 1.4 + (i * 0.04)
         dt_slogan_parts.append(f"drawtext=fontfile={FONT}:text='{char}':fontcolor=white@0.7:fontsize=28:x=(w-300)/2 + {i*18}:y=780:enable='gt(t,{delay})'")
 
-    # --- FIX SCANLINES : Utilisation de GEQ au lieu de 300+ drawbox ---
+    # Filtre scanline unique (GEQ) pour éviter l'erreur d'argument trop long
     scanline_filter = "geq=lum='if(mod(Y,4),lum(X,Y),lum(X,Y)*0.75)'"
 
     vignette_parts = [
@@ -96,7 +96,6 @@ def append_logo(video_in, opts):
 # ═══════════════════════════════════════════════════════════════════════
 
 def build_cinema_segment(src, out, duration, zoom_speed, opts, role="core"):
-    # On reprend les paramètres visuels d'origine (saturation, contrast)
     vf = f"fps=24,eq=saturation=1.18:brightness=-0.01:contrast=1.15,zoompan=z='min(zoom+0.0015,1.5)':d={int(duration*24)}:s=720x1280"
     cmd = ["ffmpeg", "-y", "-t", f"{duration:.3f}", "-i", src, "-vf", vf, "-c:v", "libx264", "-crf", "18", out]
     run(cmd)
@@ -110,7 +109,6 @@ def assemble_cinema(segments, opts):
     run(cmd)
 
 def build_cinema_overlay_no_text(opts):
-    # Bandes noires cinéma
     cmd = [
         "ffmpeg", "-y", "-i", "_assembled.mp4",
         "-vf", "drawbox=y=0:h=65:c=black@1:t=fill,drawbox=y=1215:h=65:c=black@1:t=fill",
@@ -120,58 +118,68 @@ def build_cinema_overlay_no_text(opts):
     append_logo("_premain.mp4", opts)
 
 # ═══════════════════════════════════════════════════════════════════════
-# MAIN ENTRY - RESTAURATION DE LA LOGIQUE D'AUTO-DÉTECTION
+# MAIN ENTRY
 # ═══════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     opts = DEFAULTS.copy()
     
-    # 1. Charger p.json si présent, sinon chercher le dernier .json
+    # 1. Sélection du JSON
     config_file = "p.json"
     if not os.path.exists(config_file):
         jsons = [f for f in os.listdir(".") if f.endswith(".json")]
         if jsons:
             jsons.sort(key=lambda x: os.path.getmtime(x), reverse=True)
             config_file = jsons[0]
-            print(f"Utilisation du config : {config_file}")
-
+    
     if os.path.exists(config_file):
+        print(f"Chargement de la config : {config_file}")
         with open(config_file, "r") as f:
             vira_result = json.load(f)
             opts.update(vira_result.get("options", {}))
     else:
         vira_result = {"segments": []}
-        print("Attention: Pas de fichier JSON trouvé, utilisation des défauts.")
 
-    # 2. Détection des fichiers _raw_*.mp4
-    raw_paths = [f for f in os.listdir(".") if f.startswith("_raw_") and f.endswith(".mp4")]
-    raw_paths.sort(key=lambda x: int(re.search(r'_raw_(\d+)', x).group(1)) if re.search(r'_raw_(\d+)', x) else 0)
+    # 2. Détection ROBUSTE des fichiers vidéos
+    # Cherche tout ce qui contient "_raw_" et finit par ".mp4"
+    raw_paths = [f for f in os.listdir(".") if "_raw_" in f and f.endswith(".mp4")]
+    
+    # Tri numérique basé sur le dernier nombre trouvé dans le nom du fichier
+    def get_num(name):
+        nums = re.findall(r'\d+', name)
+        return int(nums[-1]) if nums else 0
+    
+    raw_paths.sort(key=get_num)
 
     if not raw_paths:
-        print("Erreur: Aucun fichier _raw_0.mp4, etc. trouvé.")
+        print(f"DEBUG: Contenu du dossier : {os.listdir('.')}")
+        print("Erreur: Aucun fichier vidéo brut détecté.")
         sys.exit(1)
 
     n = len(raw_paths)
     print(f"Démarrage du rendu : {n} clips détectés.")
 
-    # 3. Calcul des durées (on simplifie ici mais on garde la structure)
+    # 3. Traitement des segments
     segments = []
     for i, src in enumerate(raw_paths):
         out = f"_cin_{i}.mp4"
-        # On essaie de récupérer la durée cible depuis le JSON si possible
-        sdur = 3.0 # Défaut
+        
+        # Récupération de la durée cible
+        sdur = 3.0
         if "segments" in vira_result and i < len(vira_result["segments"]):
             sdur = vira_result["segments"][i].get("duration", 3.0)
             
         role = "core"
-        if i == 0: role = "hook"
+        if n == 1: role = "punch"
+        elif i == 0: role = "hook"
         elif i == n - 1: role = "punch"
         
-        print(f"  [Segment {i+1}/{n} rôle={role.upper()}]")
+        print(f"  [Segment {i+1}/{n}  rôle={role.upper()}  cible={sdur:.2f}s]")
         build_cinema_segment(src, out, sdur, 1.0, opts, role=role)
         segments.append(out)
 
     # 4. Finalisation
+    print("\nAssemblage final...")
     assemble_cinema(segments, opts)
     build_cinema_overlay_no_text(opts)
     
