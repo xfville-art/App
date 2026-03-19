@@ -1,11 +1,12 @@
 """
-render.py — ViraCut Studio v13  ★ LesCrados.Ai Edition ★
+render.py — ViraCut Studio v14  ★ LesCrados.Ai Edition ★
 ═════════════════════════════════════════════════════════
+v14 : AUTO-DETECT JSON + CLIP MISSING GUARD
+     — Cherche automatiquement le dernier .json modifié dans le dossier
+     — Priorité : p.json > dernier *.json modifié > erreur claire
+     — Validation : vérifie chaque clip avant décodage, message d'erreur précis
+v13 : HOOK MASTER intégré · Auto-crop fill · Logo cap L1/L2
 v12 : SMART CUT ENGINE
-     — motion_start : détection du 1er frame d'action réelle (skip intro statique)
-     — punchline_seek : repérage du pic d'action dans le dernier clip
-     — zoom progressif adaptatif : push-in hook + explosion zoom punch
-     — grade BD renforcé : saturation/contraste Crados
 v11 : CONCAT CUT ENGINE + Stickers IA BD style (v2)
 v10 : VIRALITÉ ANALYSIS ENGINE
 v9  : DIALOGUE CUT ENGINE
@@ -1042,31 +1043,109 @@ def apply_subtitles(input_video, output_video, subtitles, opts):
 # ═══════════════════════════════════════════════════════════════════════
 # ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════════
-def start():
-    if not os.path.exists("p.json"):
-        print("ERREUR : p.json introuvable")
-        sys.exit(1)
 
-    with open("p.json") as f:
-        data = json.load(f)
+def _find_payload_json():
+    """
+    Cherche le fichier payload JSON à utiliser, dans l'ordre de priorité :
+      1. p.json   — fichier standard ViraCut (push par l'app)
+      2. dernier *.json modifié dans le répertoire courant
+         (utile pour déclencher manuellement ou via workflow sur un autre fichier)
+    Retourne le chemin du fichier trouvé, ou lève SystemExit si aucun.
+    """
+    # Priorité 1 : p.json standard
+    if os.path.exists("p.json"):
+        print("  Payload : p.json (standard)")
+        return "p.json"
+
+    # Priorité 2 : dernier *.json modifié (exclut package*.json, *.lock.json)
+    candidates = [
+        f for f in os.listdir(".")
+        if f.endswith(".json")
+        and not f.startswith("package")
+        and "lock" not in f
+        and os.path.isfile(f)
+    ]
+    if candidates:
+        latest = max(candidates, key=lambda f: os.path.getmtime(f))
+        print(f"  Payload : {latest} (dernier JSON modifié — p.json absent)")
+        return latest
+
+    print("ERREUR : aucun fichier payload JSON trouvé (ni p.json ni *.json)")
+    print("  → Vérifier que l'app a bien poussé p.json sur le dépôt.")
+    sys.exit(1)
+
+
+def _validate_clips(clips_raw):
+    """
+    Vérifie que chaque clip possède un champ 'data' non-vide et décodable.
+    Affiche un message d'erreur précis pour chaque clip invalide.
+    Retourne True si tous les clips sont valides, False sinon.
+    """
+    all_ok = True
+    for i, v in enumerate(clips_raw):
+        name = v.get("name", f"clip_{i+1}")
+        data = v.get("data", "")
+
+        if not data:
+            print(f"  ✗ Clip {i+1} '{name}' : champ 'data' vide ou absent")
+            all_ok = False
+            continue
+
+        # Vérifier que le base64 est bien décodable
+        try:
+            decoded = base64.b64decode(data)
+            if len(decoded) < 1024:   # < 1 Ko = probablement pas une vraie vidéo
+                print(f"  ✗ Clip {i+1} '{name}' : données trop courtes ({len(decoded)} octets) — clip corrompu ou manquant")
+                all_ok = False
+            else:
+                print(f"  ✓ Clip {i+1} '{name}' : {len(decoded)/1_048_576:.1f} MB — OK")
+        except Exception as e:
+            print(f"  ✗ Clip {i+1} '{name}' : décodage base64 impossible — {e}")
+            all_ok = False
+
+    return all_ok
+
+
+def start():
+    # ── Trouver le payload JSON ────────────────────────────────────────
+    payload_path = _find_payload_json()
+
+    try:
+        with open(payload_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"ERREUR : {payload_path} n'est pas un JSON valide — {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"ERREUR lecture {payload_path} : {e}")
+        sys.exit(1)
 
     clips_raw = data.get("videos", [])
     opts      = data.get("options", {})
 
     if not clips_raw:
-        print("ERREUR : aucun clip dans p.json")
+        print(f"ERREUR : aucun clip dans {payload_path} (champ 'videos' vide ou absent)")
         sys.exit(1)
 
     print("=" * 60)
-    print("  ViraCut v13 -- LesCrados.Ai  [LOGO CUSTOM ENGINE]")
+    print("  ViraCut v14 -- LesCrados.Ai  [AUTO ENGINE]")
     print("=" * 60)
-    print(f"  Clips recus        : {len(clips_raw)}")
+    print(f"  Payload            : {payload_path}")
+    print(f"  Clips reçus        : {len(clips_raw)}")
     print(f"  Smart Cut          : {cfg(opts,'smart_cut')}")
     print(f"  Scene threshold    : {cfg(opts,'scene_thr')}")
     print(f"  Static skip max    : {cfg(opts,'static_max_skip')}s")
     print(f"  Hook zoom          : {cfg(opts,'hook_zoom')} (×{cfg(opts,'zoom_hook_scale')})")
     print(f"  Punch zoom         : {cfg(opts,'punch_zoom')} (×{cfg(opts,'zoom_punch_scale')})")
     print(f"  Grade              : sat={cfg(opts,'grade_saturation')} cont={cfg(opts,'grade_contrast')}")
+
+    # ── Validation des clips avant décodage ───────────────────────────
+    print("\n  [Validation clips]")
+    if not _validate_clips(clips_raw):
+        print("\nERREUR : un ou plusieurs clips sont invalides ou manquants.")
+        print("  → Vérifier que tous les fichiers vidéo ont bien été uploadés par l'app.")
+        sys.exit(1)
+    print(f"  Tous les clips ({len(clips_raw)}) sont valides ✅\n")
 
     # Decodage + sanitisation des clips sources
     # Force un re-encode propre pour éliminer les artefacts GOP des clips AI
