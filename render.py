@@ -330,7 +330,7 @@ def build_logo_splash(out, opts):
         for _sy in range(0, Hi, 4)
     ]
 
-    # Vignette simulée par drawbox (vignette= absent sur GitHub runners)
+    # Vignette simulée par drawbox (vignette= filter absent sur runners GitHub)
     vig = int(min(Wi, Hi) * 0.18)
     vignette_parts = [
         f"drawbox=x=0:y=0:w={Wi}:h={vig}:color=black@0.55:t=fill",
@@ -339,32 +339,28 @@ def build_logo_splash(out, opts):
         f"drawbox=x={Wi-vig}:y=0:w={vig}:h={Hi}:color=black@0.40:t=fill",
     ]
 
-    # ── PASSE 1 : visuels uniquement, PAS de fade dans filter_complex ──
-    # fade= plante sur source lavfi (geq= produit gbrp, incompatible).
-    # On génère d'abord le visuel brut dans un fichier intermédiaire yuv420p.
+    # format=yuv420p obligatoire avant fade sur source lavfi (rgb24 sinon)
     vf_parts = (
         [bg_filter, dt_l1, dt_l2, dt_l3, dt_line]
         + dt_slogan_parts
         + scanlines
         + vignette_parts
-        + ["format=yuv420p"]      # conversion obligatoire gbrp→yuv420p
+        + [
+            "format=yuv420p",
+            "fade=t=in:st=0:d=0.2",
+            f"fade=t=out:st={dur-0.4:.2f}:d=0.4",
+        ]
     )
-    vf_pass1 = ",".join(vf_parts)
+    vf = ",".join(vf_parts)
 
-    tmp_visual = "_logo_visual.mp4"
+    print(f"  [Logo] thème={theme_id}  L1={l1_txt}  L2={l2_txt}  L3={l3_txt}"
+          + (f"  slogan='{slogan}'" if slogan else ""))
+
     run(
         f'ffmpeg -y -f lavfi -i "color=c=black:size={W}x{H}:rate={fps}" '
         f'-f lavfi -i "anullsrc=r=44100:cl=stereo" -t {dur} '
-        f'-filter_complex "[0:v]{vf_pass1}[v];[1:a]atrim=0:{dur}[a]" '
-        f'-map "[v]" -map "[a]" -c:v libx264 -pix_fmt yuv420p -crf {crf} "{tmp_visual}"'
-    )
-
-    # ── PASSE 2 : fade in/out via -vf simple sur le fichier réel ──────
-    # Sur un vrai fichier h264 yuv420p, fade= fonctionne toujours.
-    run(
-        f'ffmpeg -y -i "{tmp_visual}" '
-        f'-vf "fade=t=in:st=0:d=0.2,fade=t=out:st={dur-0.4:.2f}:d=0.4" '
-        f'-c:v libx264 -pix_fmt yuv420p -crf {crf} -c:a copy "{out}"'
+        f'-filter_complex "[0:v]{vf}[v];[1:a]atrim=0:{dur}[a]" '
+        f'-map "[v]" -map "[a]" -c:v libx264 -pix_fmt yuv420p -crf {crf} "{out}"'
     )
 
 
@@ -1184,78 +1180,84 @@ def start():
         map_v = f"-map 0:{h264_idx}" if h264_idx is not None else "-map 0:v:0"
 
         # ── Auto-crop + scale-fill 9:16 ──────────────────────────────
-        # 1. cropdetect sur frames stables (milieu du clip, pas la fin)
-        # 2. Vote majoritaire sur les valeurs détectées → crop le plus stable
-        # 3. Scale-fill : surscale puis crop centré → plein écran sans bandes
+        # ── Auto-crop + scale-fill 9:16 ──────────────────────────────
+        # Supprime les bandes noires/grises/blanches des clips sources
+        # (bordures de cartes collectibles AI, pillarbox, letterbox).
+        # Stratégie robuste :
+        #   1. cropdetect sur le milieu du clip (évite intro/outro)
+        #   2. Vote majoritaire sur toutes les valeurs stables
+        #   3. Validation stricte : retirer si > 1% dans au moins 1 dimension
+        #   4. Scale-fill : surscale → crop centré → plein écran garanti
         def get_crop(path, map_flag):
-            """
-            Retourne 'w:h:x:y' ou None si pas de bandes détectées.
-            Stratégie : analyse 6s depuis 20% de la durée (évite intro/outro),
-            vote majoritaire sur les crops détectés, seuil 16 (détecte les
-            bordures grises/blanches des cartes collectibles).
-            """
+            """Retourne 'w:h:x:y' ou None si aucune bande détectable."""
             try:
                 src_dur = duration(path)
-                # Commencer à 20% de la durée pour éviter l'intro statique
-                ss = max(0.3, src_dur * 0.20)
-                # Analyser 6s max ou 60% de la durée
-                t  = min(6.0, src_dur * 0.60)
+                # Analyser depuis 15% jusqu'à 75% de la durée
+                ss = max(0.3, src_dur * 0.15)
+                t  = min(8.0, src_dur * 0.60)
 
                 r2 = subprocess.run(
                     f'ffmpeg -ss {ss:.2f} -t {t:.2f} -i "{path}" {map_flag} '
                     f'-vf "cropdetect=limit=16:round=2:reset=1" -f null - 2>&1',
                     shell=True, capture_output=True, text=True
                 )
-                out = r2.stdout + r2.stderr
+                lines = (r2.stdout + r2.stderr).splitlines()
+
                 crops = []
-                for line in out.splitlines():
-                    if "crop=" in line and "Parsed_cropdetect" in line:
-                        c = line.split("crop=")[-1].strip().split()[0]
-                        # Valider le format w:h:x:y
-                        parts = c.split(":")
-                        if len(parts) == 4:
-                            try:
-                                map(int, parts)
-                                crops.append(c)
-                            except ValueError:
-                                pass
+                for line in lines:
+                    if "crop=" not in line or "Parsed_cropdetect" not in line:
+                        continue
+                    c = line.split("crop=")[-1].strip().split()[0]
+                    parts = c.split(":")
+                    if len(parts) != 4:
+                        continue
+                    try:
+                        cw2, ch2, cx2, cy2 = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
+                    except (ValueError, TypeError):
+                        continue
+                    if cw2 > 0 and ch2 > 0:
+                        crops.append((cw2, ch2, cx2, cy2))
 
-                if not crops:
+                if len(crops) < 4:
                     return None
 
-                # Vote majoritaire — prendre le crop le plus fréquent
+                # Vote majoritaire
                 from collections import Counter
-                vote = Counter(crops)
-                best, count = vote.most_common(1)[0]
-                if count < 3:  # pas assez de stabilité → ignorer
+                vote   = Counter(crops)
+                best_t, count = vote.most_common(1)[0]
+                if count < max(3, len(crops) // 8):
                     return None
 
-                cw, ch, cx, cy = map(int, best.split(":"))
+                cw, ch, cx, cy = best_t
 
-                src_probe = ffprobe(path)
-                vs = [s for s in src_probe.get("streams", [])
-                      if s.get("codec_type") == "video"]
+                # Dimensions source
+                sp = ffprobe(path)
+                vs = [s for s in sp.get("streams", []) if s.get("codec_type") == "video"]
                 if not vs:
                     return None
                 sw = int(vs[0].get("width",  cw))
                 sh = int(vs[0].get("height", ch))
 
-                # Ignorer si le crop retire moins de 3% dans chaque dimension
-                if (sw - cw) < sw * 0.03 and (sh - ch) < sh * 0.03:
+                removed_w = sw - cw   # pixels retirés en largeur
+                removed_h = sh - ch   # pixels retirés en hauteur
+
+                # Appliquer dès qu'une bande > 1% est détectée (OR, pas AND)
+                if removed_w < sw * 0.01 and removed_h < sh * 0.01:
                     return None
 
-                print(f"  Clip {i} : autocrop → {best} "
-                      f"(retiré {sw-cw}px H + {sh-ch}px V, vote={count}/{len(crops)})")
-                return best
+                print(f"  Clip {i} : autocrop → {cw}:{ch}:{cx}:{cy} "
+                      f"(−{removed_w}px largeur, −{removed_h}px hauteur, "
+                      f"vote {count}/{len(crops)})")
+                return f"{cw}:{ch}:{cx}:{cy}"
 
             except Exception as e:
-                print(f"  Clip {i} : autocrop échoué ({e}) — scale direct")
+                print(f"  Clip {i} : autocrop erreur ({e}) — scale direct")
                 return None
 
-        crop_param = get_crop(raw, map_v)
+        crop_param  = get_crop(raw, map_v)
         crop_filter = f"crop={crop_param}," if crop_param else ""
 
-        # scale=increase puis crop centré → plein écran 9:16, zéro bande
+        # scale=increase puis crop centré → plein écran 9:16, zéro bande résiduelle
         vf_scale = (
             f"{crop_filter}"
             f"scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,"
