@@ -235,15 +235,11 @@ def build_logo_splash(out, opts):
 
     # ── Paramètres logo depuis opts (App-11) ──────────────────────────
     logo_cfg = opts.get("logo", {})
-    l1_raw   = str(logo_cfg.get("l1", "LES")).strip().upper()     or "LES"
-    l2_raw   = str(logo_cfg.get("l2", "CRADOS")).strip().upper()  or "CRADOS"
+    l1_txt   = str(logo_cfg.get("l1", "LES")).strip().upper()     or "LES"
+    l2_txt   = str(logo_cfg.get("l2", "CRADOS")).strip().upper()  or "CRADOS"
     l3_txt   = str(logo_cfg.get("l3", ".Ai")).strip()             or ".Ai"
     slogan   = str(logo_cfg.get("slogan", "")).strip()
     theme_id = str(logo_cfg.get("theme", "crados")).lower()
-
-    # Cap L1/L2 à 14 chars max pour éviter débordement sur tous formats
-    l1_txt = l1_raw[:14] + ("…" if len(l1_raw) > 14 else "")
-    l2_txt = l2_raw[:14] + ("…" if len(l2_raw) > 14 else "")
 
     # Thèmes : (halo_r, halo_g, halo_b, accent_hex)
     THEMES = {
@@ -259,11 +255,8 @@ def build_logo_splash(out, opts):
     margin   = int(Wi * 0.06)
     max_w    = Wi - margin * 2
 
-    # L2 dominant : taille auto pour tenir dans max_w — facteur 0.65 (conservateur)
-    # On prend le max entre L1 et L2 pour dimensionner sur le plus long
-    max_len  = max(len(l1_txt), len(l2_txt), 1)
-    l2_sz  = max(24, int(max_w / (max_len * 0.65)))
-    l2_sz  = min(l2_sz, int(max_w / 5))  # plancher absolu : 5 chars min visibles
+    # L2 dominant : taille auto pour tenir dans max_w
+    l2_sz  = max(24, int(max_w / (max(len(l2_txt), 1) * 0.76)))
     l1_sz  = int(l2_sz * 0.44)
     l3_sz  = int(l2_sz * 0.48)
     sl_sz  = int(l2_sz * 0.28) if slogan else 0
@@ -937,10 +930,6 @@ def subtitle_analysis(segments, opts, vira_result):
         txt  = str(s.get("text", "")).strip()[:28]
         if not txt:
             continue
-        # Fix 3 : exclure tout sous-titre qui contient le handle (double watermark)
-        if "@lescrados" in txt.lower() or "@les" in txt.lower():
-            print(f'    📝 Sous-titre "{txt}" exclu (handle détecté)')
-            continue
         t0   = float(s.get("t_start", 0.5))
         tdur = float(s.get("t_dur",   2.0))
         # Anti-chevauchement
@@ -1111,12 +1100,57 @@ def start():
 
         map_v = f"-map 0:{h264_idx}" if h264_idx is not None else "-map 0:v:0"
 
-        # Re-encode : scale crop-fill 9:16 (pas de pad → pas de bandes grises/noires)
-        # scale=W*sar:H conserve les proportions en over-scaling puis crop centré
+        # ── Auto-crop + scale-fill 9:16 ──────────────────────────────
+        # 1. Détecte les bandes noires/blanches source via cropdetect
+        # 2. Crop pour les retirer
+        # 3. Scale-fill : surscale puis crop centré → plein écran sans bandes
+        def get_crop(path, map_flag):
+            """Retourne 'w:h:x:y' ou None si pas de bandes détectées."""
+            try:
+                r2 = subprocess.run(
+                    f'ffmpeg -ss 0.5 -t 3 -i "{path}" {map_flag} '
+                    f'-vf "cropdetect=limit=24:round=2:reset=0" -f null - 2>&1',
+                    shell=True, capture_output=True, text=True
+                )
+                out = r2.stdout + r2.stderr
+                crops = []
+                for line in out.splitlines():
+                    if "crop=" in line and "Parsed_cropdetect" in line:
+                        c = line.split("crop=")[-1].strip().split()[0]
+                        crops.append(c)
+                if not crops:
+                    return None
+                # Prendre le crop le plus fréquent (dernière valeur stabilisée)
+                cw, ch, cx, cy = map(int, crops[-1].split(":"))
+                src_probe = ffprobe(path)
+                vs = [s for s in src_probe.get("streams", [])
+                      if s.get("codec_type") == "video"]
+                if not vs:
+                    return None
+                sw = int(vs[0].get("width", cw))
+                sh = int(vs[0].get("height", ch))
+                # Ignorer si le crop est quasi-identique à la source (< 2% de marge)
+                if abs(cw - sw) < sw * 0.02 and abs(ch - sh) < sh * 0.02:
+                    return None
+                return f"{cw}:{ch}:{cx}:{cy}"
+            except Exception:
+                return None
+
+        crop_param = get_crop(raw, map_v)
+        if crop_param:
+            print(f"  Clip {i} : autocrop détecté → crop={crop_param}")
+            crop_filter = f"crop={crop_param},"
+        else:
+            crop_filter = ""
+
+        # scale=increase puis crop centré → plein écran 9:16, zéro bande
         vf_scale = (
+            f"{crop_filter}"
             f"scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,"
-            f"crop={W}:{H},setsar=1,fps={fps}"
+            f"crop={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
+            f"setsar=1,fps={fps}"
         )
+
         if audio_streams:
             run(
                 f'ffmpeg -y -i "{raw}" {map_v} -map 0:a:0 '
