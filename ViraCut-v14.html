@@ -1853,20 +1853,29 @@ function dlClose(){document.getElementById('dlSheet').classList.remove('open');}
 
 async function fetchVideoBlob(onProgress){
   if(_cachedVideoBlob)return _cachedVideoBlob;
-  // 1. Get artifacts list for the run
+
+  // Stratégie 1 : output_latest.mp4 committé dans le repo (vrai MP4, pas de zip)
+  const rawUrl=`https://raw.githubusercontent.com/${repo}/main/output_latest.mp4`;
+  try{
+    const r=await fetch(rawUrl,{headers:{'Authorization':`Bearer ${token}`}});
+    if(r.ok){
+      const blob=await r.blob();
+      if(blob.size>10000){_cachedVideoBlob=blob;return blob;}
+    }
+  }catch(_){}
+
+  // Stratégie 2 : artifact zip (fallback)
   const artRes=await fetch(
     `https://api.github.com/repos/${repo}/actions/runs/${_currentRunId}/artifacts`,
     {headers:{'Authorization':`Bearer ${token}`}}
   ).then(r=>r.json());
   const art=(artRes.artifacts||[]).find(a=>a.name==='viracut-output');
-  if(!art)throw new Error('Artifact introuvable');
-  // 2. Get download URL (redirects to zip)
+  if(!art)throw new Error('Ni output_latest.mp4 ni artifact trouvé');
   const dlRes=await fetch(
     `https://api.github.com/repos/${repo}/actions/artifacts/${art.id}/zip`,
     {headers:{'Authorization':`Bearer ${token}`}}
   );
-  if(!dlRes.ok)throw new Error('Download échoué: '+dlRes.status);
-  // GitHub redirects — follow redirect
+  if(!dlRes.ok)throw new Error('Download artifact échoué: '+dlRes.status);
   const blob=await dlRes.blob();
   _cachedVideoBlob=blob;
   return blob;
@@ -1879,7 +1888,9 @@ async function doShare(){
   btn.disabled=true;
   try{
     const blob=await fetchVideoBlob();
-    const file=new File([blob],'viracut-output.zip',{type:blob.type});
+    const isMP4=blob.type.includes('video')||blob.size>50000;
+    const fname=isMP4?'viracut-output.mp4':'viracut-output.zip';
+    const file=new File([blob],fname,{type:blob.type});
     if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
       await navigator.share({
         title:'LesCrados.Ai — Montage TikTok',
@@ -1888,8 +1899,7 @@ async function doShare(){
       });
       dlClose();
     }else{
-      // Fallback: trigger download
-      triggerBlobDownload(blob,'viracut-output.zip');
+      triggerBlobDownload(blob,fname);
       dlClose();
     }
   }catch(e){
@@ -1905,10 +1915,12 @@ async function doDirectDownload(){
   btn.disabled=true;
   try{
     const blob=await fetchVideoBlob();
-    triggerBlobDownload(blob,'viracut-output.zip');
+    const fname=(blob.type.includes('video')||blob.size>50000)
+      ?'viracut-output.mp4':'viracut-output.zip';
+    triggerBlobDownload(blob,fname);
     dlClose();
   }catch(e){
-    // Fallback to artifact page
+    // Fallback: ouvrir la page GitHub du run
     window.open(_currentRunUrl,'_blank');
     dlClose();
   }finally{
