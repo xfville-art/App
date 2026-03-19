@@ -32,7 +32,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          # cache: pip retiré — plante si requirements.txt absent
 
       - name: Install FFmpeg
         run: |
@@ -55,18 +54,34 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 render.py
 
+      # ── Préparer le MP4 dans un dossier dédié pour l'artifact ──────
+      # upload-artifact@v4 sur Linux zippe en .tar par défaut.
+      # En isolant output.mp4 seul dans ./artifact/, le téléchargement
+      # donne un zip contenant uniquement output.mp4 — extractable directement.
+      - name: Prepare artifact folder
+        if: always()
+        run: |
+          mkdir -p artifact
+          if [ -f output.mp4 ]; then
+            cp output.mp4 artifact/output.mp4
+            echo "output.mp4 prêt ($(du -sh artifact/output.mp4 | cut -f1))"
+          else
+            echo "::warning::output.mp4 absent — rendu probablement échoué"
+          fi
+
       - name: Upload output video
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: viracut-output
-          path: output.mp4
+          path: artifact/output.mp4   # fichier seul = zip minimal
           retention-days: 7
           if-no-files-found: warn
+          compression-level: 0        # MP4 déjà compressé — pas de re-compression
 
       - name: Cleanup temp files
         if: always()
         run: |
           rm -f _raw_*.mp4 _cin_*.mp4 _assembled.mp4 _premain.mp4 \
-                _logo.mp4 _presub.mp4 _concat*.txt _sub_*.txt \
-                p.json pa.json 2>/dev/null || true
+                _logo.mp4 _presub.mp4 _output_fade.mp4 _concat*.txt \
+                _sub_*.txt p.json pa.json 2>/dev/null || true
