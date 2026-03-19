@@ -1,7 +1,7 @@
 """
 render.py — ViraCut Studio v14  ★ LesCrados.Ai Edition ★
 ═════════════════════════════════════════════════════════
-v14.3 : FIX SCANLINES + ROBUST FILE DETECTION
+v14.4 : SMART FILE DETECTION (JSON-BASED FALLBACK) + GEQ SCANLINES
 """
 import json, base64, os, subprocess, sys, re, urllib.request, urllib.error
 
@@ -32,7 +32,7 @@ def run(cmd):
     return r
 
 # ═══════════════════════════════════════════════════════════════════════
-# LOGO SPLASH (OPTIMISÉ)
+# LOGO SPLASH (OPTIMISÉ GEQ)
 # ═══════════════════════════════════════════════════════════════════════
 
 def build_logo_splash(output, opts):
@@ -55,7 +55,7 @@ def build_logo_splash(output, opts):
         delay = 1.4 + (i * 0.04)
         dt_slogan_parts.append(f"drawtext=fontfile={FONT}:text='{char}':fontcolor=white@0.7:fontsize=28:x=(w-300)/2 + {i*18}:y=780:enable='gt(t,{delay})'")
 
-    # Filtre scanline unique (GEQ) pour éviter l'erreur d'argument trop long
+    # Filtre scanline unique (GEQ)
     scanline_filter = "geq=lum='if(mod(Y,4),lum(X,Y),lum(X,Y)*0.75)'"
 
     vignette_parts = [
@@ -124,36 +124,49 @@ def build_cinema_overlay_no_text(opts):
 if __name__ == "__main__":
     opts = DEFAULTS.copy()
     
-    # 1. Sélection du JSON
+    # 1. Sélection du JSON (p.json priorité)
     config_file = "p.json"
     if not os.path.exists(config_file):
-        jsons = [f for f in os.listdir(".") if f.endswith(".json")]
+        jsons = [f for f in os.listdir(".") if f.endswith(".json") and f not in ["package.json", "firebase.json"]]
         if jsons:
             jsons.sort(key=lambda x: os.path.getmtime(x), reverse=True)
             config_file = jsons[0]
     
+    vira_result = {"segments": []}
     if os.path.exists(config_file):
         print(f"Chargement de la config : {config_file}")
-        with open(config_file, "r") as f:
-            vira_result = json.load(f)
-            opts.update(vira_result.get("options", {}))
-    else:
-        vira_result = {"segments": []}
+        try:
+            with open(config_file, "r") as f:
+                vira_result = json.load(f)
+                opts.update(vira_result.get("options", {}))
+        except:
+            print("Erreur lors de la lecture du JSON.")
 
-    # 2. Détection ROBUSTE des fichiers vidéos
-    # Cherche tout ce qui contient "_raw_" et finit par ".mp4"
-    raw_paths = [f for f in os.listdir(".") if "_raw_" in f and f.endswith(".mp4")]
+    # 2. Détection des fichiers vidéos
+    # Priorité 1 : Fichiers explicitement nommés _raw_X.mp4
+    raw_paths = [f for f in os.listdir(".") if f.startswith("_raw_") and f.endswith(".mp4")]
     
-    # Tri numérique basé sur le dernier nombre trouvé dans le nom du fichier
+    # Priorité 2 : Si aucun _raw_, on regarde dans le JSON pour trouver les noms de fichiers originaux
+    if not raw_paths and "segments" in vira_result:
+        for seg in vira_result["segments"]:
+            f_name = seg.get("file")
+            if f_name and os.path.exists(f_name):
+                raw_paths.append(f_name)
+    
+    # Priorité 3 : On prend tous les MP4 du dossier (sauf ceux générés par le script)
+    if not raw_paths:
+        raw_paths = [f for f in os.listdir(".") if f.endswith(".mp4") and not f.startswith(("_cin_", "_premain", "_assembled", "_logo", "output"))]
+
+    # Tri numérique
     def get_num(name):
         nums = re.findall(r'\d+', name)
         return int(nums[-1]) if nums else 0
-    
     raw_paths.sort(key=get_num)
 
     if not raw_paths:
-        print(f"DEBUG: Contenu du dossier : {os.listdir('.')}")
-        print("Erreur: Aucun fichier vidéo brut détecté.")
+        print(f"DEBUG: Dossier courant: {os.getcwd()}")
+        print(f"DEBUG: Fichiers trouvés: {os.listdir('.')}")
+        print("Erreur: Aucun fichier vidéo (.mp4) n'a pu être détecté pour le rendu.")
         sys.exit(1)
 
     n = len(raw_paths)
@@ -164,9 +177,10 @@ if __name__ == "__main__":
     for i, src in enumerate(raw_paths):
         out = f"_cin_{i}.mp4"
         
-        # Récupération de la durée cible
+        # Durée cible
         sdur = 3.0
         if "segments" in vira_result and i < len(vira_result["segments"]):
+            # On essaie d'être précis sur la durée
             sdur = vira_result["segments"][i].get("duration", 3.0)
             
         role = "core"
@@ -174,7 +188,7 @@ if __name__ == "__main__":
         elif i == 0: role = "hook"
         elif i == n - 1: role = "punch"
         
-        print(f"  [Segment {i+1}/{n}  rôle={role.upper()}  cible={sdur:.2f}s]")
+        print(f"  [Segment {i+1}/{n}  rôle={role.upper()}  cible={sdur:.2f}s  source={src}]")
         build_cinema_segment(src, out, sdur, 1.0, opts, role=role)
         segments.append(out)
 
