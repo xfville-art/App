@@ -1180,15 +1180,26 @@ def start():
         map_v = f"-map 0:{h264_idx}" if h264_idx is not None else "-map 0:v:0"
 
         # ── Auto-crop + scale-fill 9:16 ──────────────────────────────
-        # 1. Détecte les bandes noires/blanches source via cropdetect
-        # 2. Crop pour les retirer
+        # 1. cropdetect sur frames stables (milieu du clip, pas la fin)
+        # 2. Vote majoritaire sur les valeurs détectées → crop le plus stable
         # 3. Scale-fill : surscale puis crop centré → plein écran sans bandes
         def get_crop(path, map_flag):
-            """Retourne 'w:h:x:y' ou None si pas de bandes détectées."""
+            """
+            Retourne 'w:h:x:y' ou None si pas de bandes détectées.
+            Stratégie : analyse 6s depuis 20% de la durée (évite intro/outro),
+            vote majoritaire sur les crops détectés, seuil 16 (détecte les
+            bordures grises/blanches des cartes collectibles).
+            """
             try:
+                src_dur = duration(path)
+                # Commencer à 20% de la durée pour éviter l'intro statique
+                ss = max(0.3, src_dur * 0.20)
+                # Analyser 6s max ou 60% de la durée
+                t  = min(6.0, src_dur * 0.60)
+
                 r2 = subprocess.run(
-                    f'ffmpeg -ss 0.5 -t 3 -i "{path}" {map_flag} '
-                    f'-vf "cropdetect=limit=24:round=2:reset=0" -f null - 2>&1',
+                    f'ffmpeg -ss {ss:.2f} -t {t:.2f} -i "{path}" {map_flag} '
+                    f'-vf "cropdetect=limit=16:round=2:reset=1" -f null - 2>&1',
                     shell=True, capture_output=True, text=True
                 )
                 out = r2.stdout + r2.stderr
@@ -1196,31 +1207,49 @@ def start():
                 for line in out.splitlines():
                     if "crop=" in line and "Parsed_cropdetect" in line:
                         c = line.split("crop=")[-1].strip().split()[0]
-                        crops.append(c)
+                        # Valider le format w:h:x:y
+                        parts = c.split(":")
+                        if len(parts) == 4:
+                            try:
+                                map(int, parts)
+                                crops.append(c)
+                            except ValueError:
+                                pass
+
                 if not crops:
                     return None
-                # Prendre le crop le plus fréquent (dernière valeur stabilisée)
-                cw, ch, cx, cy = map(int, crops[-1].split(":"))
+
+                # Vote majoritaire — prendre le crop le plus fréquent
+                from collections import Counter
+                vote = Counter(crops)
+                best, count = vote.most_common(1)[0]
+                if count < 3:  # pas assez de stabilité → ignorer
+                    return None
+
+                cw, ch, cx, cy = map(int, best.split(":"))
+
                 src_probe = ffprobe(path)
                 vs = [s for s in src_probe.get("streams", [])
                       if s.get("codec_type") == "video"]
                 if not vs:
                     return None
-                sw = int(vs[0].get("width", cw))
+                sw = int(vs[0].get("width",  cw))
                 sh = int(vs[0].get("height", ch))
-                # Ignorer si le crop est quasi-identique à la source (< 2% de marge)
-                if abs(cw - sw) < sw * 0.02 and abs(ch - sh) < sh * 0.02:
+
+                # Ignorer si le crop retire moins de 3% dans chaque dimension
+                if (sw - cw) < sw * 0.03 and (sh - ch) < sh * 0.03:
                     return None
-                return f"{cw}:{ch}:{cx}:{cy}"
-            except Exception:
+
+                print(f"  Clip {i} : autocrop → {best} "
+                      f"(retiré {sw-cw}px H + {sh-ch}px V, vote={count}/{len(crops)})")
+                return best
+
+            except Exception as e:
+                print(f"  Clip {i} : autocrop échoué ({e}) — scale direct")
                 return None
 
         crop_param = get_crop(raw, map_v)
-        if crop_param:
-            print(f"  Clip {i} : autocrop détecté → crop={crop_param}")
-            crop_filter = f"crop={crop_param},"
-        else:
-            crop_filter = ""
+        crop_filter = f"crop={crop_param}," if crop_param else ""
 
         # scale=increase puis crop centré → plein écran 9:16, zéro bande
         vf_scale = (
