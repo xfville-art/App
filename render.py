@@ -1,7 +1,7 @@
 """
 render.py — ViraCut Studio v14  ★ LesCrados.Ai Edition ★
 ═════════════════════════════════════════════════════════
-v14.4 : SMART FILE DETECTION (JSON-BASED FALLBACK) + GEQ SCANLINES
+v14.5 : AUTO-DOWNLOAD MISSING RAWS + GEQ SCANLINES
 """
 import json, base64, os, subprocess, sys, re, urllib.request, urllib.error
 
@@ -11,19 +11,14 @@ import json, base64, os, subprocess, sys, re, urllib.request, urllib.error
 FONT = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 
 DEFAULTS = {
-    "mode":            "auto",
-    "resolution":      "720x1280",
-    "fps":             24,
-    "crf":             18,
-    "audio_br":        192,
-    "fade_dur":        0.3,
-    "cinema_dur":      12,
-    "cinema_clip_min": 7,
-    "cinema_clip_max": 12,
+    "mode": "auto",
+    "resolution": "720x1280",
+    "fps": 24,
+    "crf": 18,
+    "audio_br": 192,
 }
 
 def run(cmd):
-    # Print d'aide au debug
     print(f"    $ {' '.join([str(c) for c in cmd[:15]])}...")
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
@@ -31,14 +26,22 @@ def run(cmd):
         raise RuntimeError(f"FFmpeg failed (code {r.returncode})")
     return r
 
+def download_file(url, dest):
+    """Télécharge un fichier avec gestion d'erreur basique."""
+    try:
+        print(f"  ⬇️ Téléchargement : {dest}...")
+        urllib.request.urlretrieve(url, dest)
+        return True
+    except Exception as e:
+        print(f"  ❌ Erreur téléchargement {url} : {e}")
+        return False
+
 # ═══════════════════════════════════════════════════════════════════════
 # LOGO SPLASH (OPTIMISÉ GEQ)
 # ═══════════════════════════════════════════════════════════════════════
 
 def build_logo_splash(output, opts):
-    """Génère l'intro/outro avec logo et effet CRT optimisé via filtre GEQ."""
     Wi, Hi = 720, 1280
-    
     l1 = opts.get("logo_l1", "VIRACUT").upper()
     l2 = opts.get("logo_l2", "STUDIO").upper()
     l3 = opts.get("logo_l3", "V14").upper()
@@ -55,7 +58,6 @@ def build_logo_splash(output, opts):
         delay = 1.4 + (i * 0.04)
         dt_slogan_parts.append(f"drawtext=fontfile={FONT}:text='{char}':fontcolor=white@0.7:fontsize=28:x=(w-300)/2 + {i*18}:y=780:enable='gt(t,{delay})'")
 
-    # Filtre scanline unique (GEQ)
     scanline_filter = "geq=lum='if(mod(Y,4),lum(X,Y),lum(X,Y)*0.75)'"
 
     vignette_parts = [
@@ -65,137 +67,83 @@ def build_logo_splash(output, opts):
         f"drawbox=x={Wi-129}:w=129:h=1280:c=black@0.40:t=fill"
     ]
 
-    vf = (
-        bg_filter + ";" +
-        "[bg]" + ",".join([dt_l1, dt_l2, dt_l3, dt_line] + dt_slogan_parts + [scanline_filter] + vignette_parts) +
-        ",format=yuv420p[v]"
-    )
+    vf = (bg_filter + ";" + "[bg]" + ",".join([dt_l1, dt_l2, dt_l3, dt_line] + dt_slogan_parts + [scanline_filter] + vignette_parts) + ",format=yuv420p[v]")
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "lavfi", "-i", "color=c=black:size=720x1280:rate=24",
-        "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
-        "-t", "2.5",
-        "-filter_complex", vf,
-        "-map", "[v]", "-map", "1:a",
-        "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p",
-        output
-    ]
+    cmd = ["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:size=720x1280:rate=24", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", "2.5", "-filter_complex", vf, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", output]
     run(cmd)
 
 def append_logo(video_in, opts):
     build_logo_splash("_logo.mp4", opts)
     with open("_concat_logo.txt", "w") as f:
-        f.write(f"file '{video_in}'\n")
-        f.write("file '_logo.mp4'\n")
-    cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "_concat_logo.txt", "-c", "copy", "output.mp4"]
-    run(cmd)
+        f.write(f"file '{video_in}'\nfile '_logo.mp4'\n")
+    run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "_concat_logo.txt", "-c", "copy", "output.mp4"])
 
 # ═══════════════════════════════════════════════════════════════════════
 # ENGINE
 # ═══════════════════════════════════════════════════════════════════════
 
-def build_cinema_segment(src, out, duration, zoom_speed, opts, role="core"):
+def build_cinema_segment(src, out, duration, opts):
     vf = f"fps=24,eq=saturation=1.18:brightness=-0.01:contrast=1.15,zoompan=z='min(zoom+0.0015,1.5)':d={int(duration*24)}:s=720x1280"
-    cmd = ["ffmpeg", "-y", "-t", f"{duration:.3f}", "-i", src, "-vf", vf, "-c:v", "libx264", "-crf", "18", out]
-    run(cmd)
+    run(["ffmpeg", "-y", "-t", f"{duration:.3f}", "-i", src, "-vf", vf, "-c:v", "libx264", "-crf", "18", out])
     return out
 
-def assemble_cinema(segments, opts):
-    with open("_concat.txt", "w") as f:
-        for s in segments:
-            f.write(f"file '{s}'\n")
-    cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "_concat.txt", "-c", "copy", "_assembled.mp4"]
-    run(cmd)
-
-def build_cinema_overlay_no_text(opts):
-    cmd = [
-        "ffmpeg", "-y", "-i", "_assembled.mp4",
-        "-vf", "drawbox=y=0:h=65:c=black@1:t=fill,drawbox=y=1215:h=65:c=black@1:t=fill",
-        "-c:v", "libx264", "-crf", "18", "_premain.mp4"
-    ]
-    run(cmd)
-    append_logo("_premain.mp4", opts)
-
 # ═══════════════════════════════════════════════════════════════════════
-# MAIN ENTRY
+# MAIN
 # ═══════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     opts = DEFAULTS.copy()
+    config_file = "p.json" if os.path.exists("p.json") else "pa.json"
     
-    # 1. Sélection du JSON (p.json priorité)
-    config_file = "p.json"
     if not os.path.exists(config_file):
-        jsons = [f for f in os.listdir(".") if f.endswith(".json") and f not in ["package.json", "firebase.json"]]
-        if jsons:
-            jsons.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-            config_file = jsons[0]
-    
-    vira_result = {"segments": []}
-    if os.path.exists(config_file):
-        print(f"Chargement de la config : {config_file}")
-        try:
-            with open(config_file, "r") as f:
-                vira_result = json.load(f)
-                opts.update(vira_result.get("options", {}))
-        except:
-            print("Erreur lors de la lecture du JSON.")
-
-    # 2. Détection des fichiers vidéos
-    # Priorité 1 : Fichiers explicitement nommés _raw_X.mp4
-    raw_paths = [f for f in os.listdir(".") if f.startswith("_raw_") and f.endswith(".mp4")]
-    
-    # Priorité 2 : Si aucun _raw_, on regarde dans le JSON pour trouver les noms de fichiers originaux
-    if not raw_paths and "segments" in vira_result:
-        for seg in vira_result["segments"]:
-            f_name = seg.get("file")
-            if f_name and os.path.exists(f_name):
-                raw_paths.append(f_name)
-    
-    # Priorité 3 : On prend tous les MP4 du dossier (sauf ceux générés par le script)
-    if not raw_paths:
-        raw_paths = [f for f in os.listdir(".") if f.endswith(".mp4") and not f.startswith(("_cin_", "_premain", "_assembled", "_logo", "output"))]
-
-    # Tri numérique
-    def get_num(name):
-        nums = re.findall(r'\d+', name)
-        return int(nums[-1]) if nums else 0
-    raw_paths.sort(key=get_num)
-
-    if not raw_paths:
-        print(f"DEBUG: Dossier courant: {os.getcwd()}")
-        print(f"DEBUG: Fichiers trouvés: {os.listdir('.')}")
-        print("Erreur: Aucun fichier vidéo (.mp4) n'a pu être détecté pour le rendu.")
+        print("❌ Erreur: Aucun fichier de configuration (p.json) trouvé.")
         sys.exit(1)
 
-    n = len(raw_paths)
-    print(f"Démarrage du rendu : {n} clips détectés.")
+    print(f"📂 Chargement de {config_file}...")
+    with open(config_file, "r") as f:
+        data = json.load(f)
+        opts.update(data.get("options", {}))
+        segments_data = data.get("segments", [])
 
-    # 3. Traitement des segments
-    segments = []
+    if not segments_data:
+        print("❌ Erreur: Aucune donnée de segment dans le JSON.")
+        sys.exit(1)
+
+    # 1. TÉLÉCHARGEMENT AUTOMATIQUE
+    raw_paths = []
+    print(f"🎬 Préparation de {len(segments_data)} segments...")
+    for i, seg in enumerate(segments_data):
+        url = seg.get("url") or seg.get("src")
+        target = f"_raw_{i}.mp4"
+        
+        if url:
+            if download_file(url, target):
+                raw_paths.append(target)
+        elif os.path.exists(target):
+            raw_paths.append(target)
+
+    if not raw_paths:
+        print("❌ Erreur: Impossible de récupérer les vidéos sources.")
+        sys.exit(1)
+
+    # 2. RENDU DES SEGMENTS
+    processed = []
     for i, src in enumerate(raw_paths):
         out = f"_cin_{i}.mp4"
-        
-        # Durée cible
-        sdur = 3.0
-        if "segments" in vira_result and i < len(vira_result["segments"]):
-            # On essaie d'être précis sur la durée
-            sdur = vira_result["segments"][i].get("duration", 3.0)
-            
-        role = "core"
-        if n == 1: role = "punch"
-        elif i == 0: role = "hook"
-        elif i == n - 1: role = "punch"
-        
-        print(f"  [Segment {i+1}/{n}  rôle={role.upper()}  cible={sdur:.2f}s  source={src}]")
-        build_cinema_segment(src, out, sdur, 1.0, opts, role=role)
-        segments.append(out)
+        dur = segments_data[i].get("duration", 3.0)
+        print(f"  📽️ Rendu segment {i+1}/{len(raw_paths)} ({dur}s)...")
+        build_cinema_segment(src, out, dur, opts)
+        processed.append(out)
 
-    # 4. Finalisation
-    print("\nAssemblage final...")
-    assemble_cinema(segments, opts)
-    build_cinema_overlay_no_text(opts)
+    # 3. ASSEMBLAGE
+    with open("_concat.txt", "w") as f:
+        for p in processed: f.write(f"file '{p}'\n")
+    
+    run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "_concat.txt", "-c", "copy", "_assembled.mp4"])
+    
+    # 4. OVERLAY & LOGO
+    run(["ffmpeg", "-y", "-i", "_assembled.mp4", "-vf", "drawbox=y=0:h=65:c=black@1:t=fill,drawbox=y=1215:h=65:c=black@1:t=fill", "-c:v", "libx264", "-crf", "18", "_premain.mp4"])
+    append_logo("_premain.mp4", opts)
     
     print("\n✅ Rendu terminé : output.mp4")
 
