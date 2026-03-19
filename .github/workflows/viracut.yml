@@ -1,22 +1,16 @@
 name: VIRACUT
 
-# ─────────────────────────────────────────────────────────────
-# Déclencheurs :
-#   1. Push d'un fichier JSON sur main  → rendu automatique
-#   2. Workflow dispatch manuel (bouton dans l'app ou API)
-# ─────────────────────────────────────────────────────────────
 on:
   push:
     branches: [main]
     paths:
-      - "p.json"         # payload standard ViraCut
-      - "*.json"         # tout autre JSON (batch, test…)
-      - "!package*.json" # exclure les manifests npm
+      - "p.json"
+      - "*.json"
+      - "!package*.json"
       - "!*.lock.json"
 
-  workflow_dispatch:     # déclenchement manuel depuis l'app
+  workflow_dispatch:
 
-# Un seul job de rendu à la fois — annule le précédent si un push arrive pendant le rendu
 concurrency:
   group: viracut-render
   cancel-in-progress: true
@@ -25,42 +19,29 @@ jobs:
   render:
     name: render
     runs-on: ubuntu-latest
-    timeout-minutes: 20   # sécurité contre les runs infinis
+    timeout-minutes: 20
 
     steps:
 
-      # ── 1. Checkout ──────────────────────────────────────────
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1          # shallow clone = plus rapide
+          fetch-depth: 1
 
-      # ── 2. Python ────────────────────────────────────────────
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
+          # cache: pip retiré — plante si requirements.txt absent
 
-      # ── 3. FFmpeg ────────────────────────────────────────────
       - name: Install FFmpeg
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             ffmpeg \
-            fonts-liberation        # LiberationSans-Bold.ttf (utilisé par render.py)
+            fonts-liberation
           ffmpeg -version | head -1
-          echo "Font check:" && ls /usr/share/fonts/truetype/liberation/ 2>/dev/null || true
 
-      # ── 4. Python deps (si requirements.txt présent) ─────────
-      - name: Install Python dependencies
-        run: |
-          pip install --upgrade pip --quiet
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt --quiet
-          fi
-
-      # ── 5. Vérifier que le payload existe ────────────────────
       - name: Check payload JSON
         run: |
           if [ ! -f p.json ]; then
@@ -69,27 +50,23 @@ jobs:
             echo "p.json trouvé ($(wc -c < p.json) octets)"
           fi
 
-      # ── 6. Lancer render.py ──────────────────────────────────
       - name: Run render.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 render.py
 
-      # ── 7. Upload artifact output.mp4 ───────────────────────
       - name: Upload output video
         uses: actions/upload-artifact@v4
-        if: always()             # uploader même en cas d'erreur partielle
+        if: always()
         with:
           name: viracut-output
           path: output.mp4
           retention-days: 7
           if-no-files-found: warn
 
-      # ── 8. Nettoyage des fichiers temporaires ───────────────
       - name: Cleanup temp files
         if: always()
         run: |
           rm -f _raw_*.mp4 _cin_*.mp4 _assembled.mp4 _premain.mp4 \
                 _logo.mp4 _presub.mp4 _concat*.txt _sub_*.txt \
                 p.json pa.json 2>/dev/null || true
-          echo "Nettoyage terminé"
