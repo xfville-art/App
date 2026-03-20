@@ -1,0 +1,191 @@
+name: Wan2.1 Image-to-Video (fal.ai)
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: 'Prompt de génération vidéo'
+        required: true
+        type: string
+      image_base64:
+        description: 'Image source base64 compressée'
+        required: true
+        type: string
+      duration:
+        required: false
+        default: '5'
+        type: string
+      aspect_ratio:
+        required: false
+        default: '9:16'
+        type: string
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install requests
+
+      - name: Generate via fal.ai Wan2.1 I2V
+        env:
+          FAL_KEY:   ${{ secrets.FAL_KEY }}
+          GH_TOKEN:  ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO:   ${{ github.repository }}
+          PROMPT:    ${{ inputs.prompt }}
+          IMG_B64:   ${{ inputs.image_base64 }}
+          DURATION:  ${{ inputs.duration }}
+          ASPECT:    ${{ inputs.aspect_ratio }}
+        run: |
+          python3 - << 'PYEOF'
+          import os, requests, time, json, base64
+
+          FAL_KEY  = os.environ['FAL_KEY']
+          GH_TOKEN = os.environ['GH_TOKEN']
+          GH_REPO  = os.environ['GH_REPO']
+          PROMPT   = os.environ['PROMPT']
+          IMG_B64  = os.environ['IMG_B64']
+          DURATION = os.environ.get('DURATION', '5')
+          ASPECT   = os.environ.get('ASPECT', '9:16')
+          RUN_ID   = str(int(time.time()))
+
+          FAL_H = {'Authorization': f'Key {FAL_KEY}', 'Content-Type': 'application/json'}
+          GH_H  = {'Authorization': f'token {GH_TOKEN}', 'Accept': 'application/vnd.github.v3+json'}
+
+          # fal.ai accepte directement une data URI base64 comme image_url
+          # Pas besoin d'upload séparé — l'API décode automatiquement
+          IMAGE_DATA_URI = f'data:image/jpeg;base64,{IMG_B64}'
+
+          # ── Soumettre le job en queue ────────────────────────────────────
+          print('🚀 Soumission job fal-ai/wan-i2v...')
+          sub = requests.post(
+              'https://queue.fal.run/fal-ai/wan-i2v',
+              headers=FAL_H,
+              json={
+                  'prompt':               PROMPT,
+                  'image_url':            IMAGE_DATA_URI,
+                  'duration':             DURATION,
+                  'aspect_ratio':         ASPECT,
+                  'num_inference_steps':  30,
+                  'enable_safety_checker': False
+              },
+              timeout=30
+          )
+
+          print(f'Submit status: {sub.status_code}')
+          if sub.status_code not in (200, 201):
+              print(sub.text[:400])
+              raise SystemExit(f'Soumission échouée: {sub.status_code}')
+
+          body = sub.json()
+          print(json.dumps(body, indent=2)[:300])
+
+          # Réponse sync directe (pas de queue)
+          if 'video' in body:
+              video_url = body['video']['url']
+              print(f'✓ Vidéo (sync): {video_url}')
+          else:
+              req_id = body.get('request_id')
+              if not req_id:
+                  raise SystemExit(f'Pas de request_id ni video dans: {body}')
+
+              print(f'✓ request_id: {req_id}')
+
+              # ── Poll statut ──────────────────────────────────────────────
+              video_url    = None
+              max_wait, interval, elapsed = 900, 10, 0
+
+              while elapsed < max_wait:
+                  time.sleep(interval)
+                  elapsed += interval
+
+                  st = requests.get(
+                      f'https://queue.fal.run/fal-ai/wan-i2v/requests/{req_id}/status',
+                      headers=FAL_H, timeout=15
+                  )
+                  if st.status_code != 200:
+                      print(f'[{elapsed}s] poll {st.status_code}')
+                      continue
+
+                  status = st.json().get('status', '?')
+                  print(f'[{elapsed}s] {status}')
+
+                  if status == 'COMPLETED':
+                      res = requests.get(
+                          f'https://queue.fal.run/fal-ai/wan-i2v/requests/{req_id}',
+                          headers=FAL_H, timeout=15
+                      )
+                      result = res.json()
+                      print(json.dumps(result, indent=2)[:300])
+                      video_url = (result.get('video') or {}).get('url')
+                      if not video_url:
+                          # Parfois dans 'outputs'
+                          video_url = (result.get('outputs') or [{}])[0].get('url')
+                      break
+                  elif status in ('FAILED', 'ERROR'):
+                      print('Détail:', json.dumps(st.json(), indent=2)[:400])
+                      raise SystemExit(f'Job échoué: {status}')
+              else:
+                  raise SystemExit('Timeout > 15 min')
+
+          if not video_url:
+              raise SystemExit('video_url introuvable')
+
+          print(f'✓ Vidéo: {video_url}')
+
+          # ── Télécharger le MP4 ───────────────────────────────────────────
+          print('📥 Téléchargement MP4...')
+          vr = requests.get(video_url, timeout=120, stream=True)
+          vr.raise_for_status()
+          out = '/tmp/output.mp4'
+          with open(out, 'wb') as f:
+              for chunk in vr.iter_content(8192):
+                  f.write(chunk)
+          size_mb = os.path.getsize(out) / 1048576
+          print(f'✓ {size_mb:.1f} MB')
+
+          # ── GitHub Release ────────────────────────────────────────────────
+          TAG = f'viravid-{RUN_ID}'
+          print(f'📦 Release {TAG}...')
+          rel = requests.post(
+              f'https://api.github.com/repos/{GH_REPO}/releases',
+              headers=GH_H,
+              json={'tag_name': TAG, 'name': f'ViraCut {RUN_ID}',
+                    'body': f'Prompt: {PROMPT}\n{ASPECT} | {DURATION}s',
+                    'draft': False, 'prerelease': True},
+              timeout=15
+          )
+          rel.raise_for_status()
+          upload_url = rel.json()['upload_url'].replace('{?name,label}', '')
+
+          with open(out, 'rb') as f:
+              up = requests.post(upload_url,
+                  headers={**GH_H, 'Content-Type': 'video/mp4'},
+                  params={'name': f'lescrados-{RUN_ID}.mp4'},
+                  data=f, timeout=120)
+          up.raise_for_status()
+
+          dl_url = up.json()['browser_download_url']
+          print(f'✓ Download: {dl_url}')
+
+          with open('/tmp/video_url.txt', 'w') as f:
+              f.write(dl_url)
+          summary = os.environ.get('GITHUB_STEP_SUMMARY', '/dev/null')
+          with open(summary, 'a') as f:
+              f.write(f'## ✅ Vidéo\n**URL:** {dl_url}\n**Tag:** `{TAG}`\n')
+          PYEOF
+
+      - name: Upload video URL
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-url
+          path: /tmp/video_url.txt
+          retention-days: 1
+          if-no-files-found: warn
