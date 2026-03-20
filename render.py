@@ -1065,18 +1065,112 @@ def start():
 
         map_v = f"-map 0:{h264_idx}" if h264_idx is not None else "-map 0:v:0"
 
-        # ── Scale fill + zoom 10% pour couper les bords de carte ────
-        # Les sources Kling/Grok contiennent ~30px de fond de carte (gris-beige)
-        # de chaque côté. Un zoom 10% coupe 36px de chaque côté → fond retiré.
-        # force_original_aspect_ratio=increase garantit que la source remplit
-        # AU MOINS 792×1408 quelle que soit sa résolution (480p, 720p, 1080p).
-        _OW = int(W) * 110 // 100; _OW += _OW % 2
-        _OH = int(H) * 110 // 100; _OH += _OH % 2
-        vf_scale = (
-            f"scale={_OW}:{_OH}:force_original_aspect_ratio=increase:flags=lanczos,"
-            f"crop={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
-            f"setsar=1,fps={fps}"
-        )
+        # ── Détection bords de carte par saturation + scale fill ────
+        # Le fond gris-beige de la carte Crados a une saturation très faible
+        # (canaux R≈G≈B). On scanne les colonnes/lignes de bord en rawvideo
+        # et on crop sur le vrai contenu avant de scaler vers W×H.
+        def _detect_card_borders(path, vw, vh):
+            """Retourne (left, right, top, bottom) via détection de saturation.
+            Aucune dépendance externe — 100% rawvideo FFmpeg."""
+            try:
+                # Tester 3 timestamps et prendre le max pour robustesse
+                dur = max(duration(path), 1.0)
+                timestamps = [min(0.5, dur*0.1), min(1.5, dur*0.3), min(dur*0.6, dur-0.1)]
+                best = (0, 0, 0, 0)
+                raw = None
+                for ts in timestamps:
+                    r2 = subprocess.run(
+                        f'ffmpeg -ss {ts:.2f} -i "{path}" -vframes 1 '
+                        f'-f rawvideo -pix_fmt rgb24 -vcodec rawvideo pipe:1 2>/dev/null',
+                        shell=True, capture_output=True
+                    )
+                    if len(r2.stdout) == vw * vh * 3:
+                        raw = r2.stdout
+                        break
+                if raw is None:
+                    return 0, 0, 0, 0
+                STEP = 4  # échantillonnage 1 ligne sur 4
+                SAT_THR = 25   # seuil saturation : fond carte < 25, contenu > 25
+                LUM_MIN = 80   # luminosité min pour éviter de couper sur du noir
+
+                def col_sat(x):
+                    rs=gs=bs=n=0
+                    for y in range(0, vh, STEP):
+                        b = (y*vw+x)*3
+                        r,g,bl = raw[b], raw[b+1], raw[b+2]
+                        rs+=r; gs+=g; bs+=bl; n+=1
+                    if n==0: return 0,0
+                    r,g,b = rs/n, gs/n, bs/n
+                    sat = max(r,g,b) - min(r,g,b)
+                    lum = (r+g+b)/3
+                    return sat, lum
+
+                def row_sat(y):
+                    rs=gs=bs=n=0
+                    for x in range(0, vw, STEP):
+                        b = (y*vw+x)*3
+                        r,g,bl = raw[b], raw[b+1], raw[b+2]
+                        rs+=r; gs+=g; bs+=bl; n+=1
+                    if n==0: return 0,0
+                    r,g,b = rs/n, gs/n, bs/n
+                    sat = max(r,g,b) - min(r,g,b)
+                    lum = (r+g+b)/3
+                    return sat, lum
+
+                def find_border(scan_fn, seq):
+                    border = 0
+                    for i in seq:
+                        sat, lum = scan_fn(i)
+                        if sat > SAT_THR or lum < LUM_MIN:
+                            border = abs(i - seq[0])
+                            break
+                    return max(0, border - 2)
+
+                left   = find_border(col_sat, list(range(0,    min(120, vw))))
+                right  = find_border(col_sat, list(range(vw-1, max(vw-120,-1), -1)))
+                top    = find_border(row_sat, list(range(0,    min(80,  vh))))
+                bottom = find_border(row_sat, list(range(vh-1, max(vh-80, -1), -1)))
+                return left, right, top, bottom
+            except Exception as _e:
+                print(f"      _detect_card_borders: {_e}")
+                return 0, 0, 0, 0
+
+        src_info2 = ffprobe(raw)
+        src_vs2   = [s for s in src_info2.get("streams",[]) if s.get("codec_type")=="video"]
+        src_w = int(src_vs2[0].get("width",  int(W))) if src_vs2 else int(W)
+        src_h = int(src_vs2[0].get("height", int(H))) if src_vs2 else int(H)
+
+        bl, br, bt, bb = _detect_card_borders(raw, src_w, src_h)
+        print(f"  Clip {i} bords carte : L={bl} R={br} T={bt} B={bb}")
+
+        if bl + br + bt + bb > 4:
+            cw = src_w - bl - br;  cw -= cw % 2
+            ch = src_h - bt - bb;  ch -= ch % 2
+            cx, cy = bl, bt
+            # Scale sur la largeur → W, crop vertical centré
+            sh = int(ch * int(W) / cw); sh += sh % 2
+            # Garantir sh >= H
+            if sh < int(H):
+                sh = int(H)
+                sw = int(cw * int(H) / ch); sw += sw % 2
+            else:
+                sw = int(W)
+            crop_x = max(0, (sw - int(W)) // 2)
+            crop_y = max(0, (sh - int(H)) // 2)
+            vf_scale = (
+                f"crop={cw}:{ch}:{cx}:{cy},"
+                f"scale={sw}:{sh}:flags=lanczos,"
+                f"crop={W}:{H}:{crop_x}:{crop_y},"
+                f"setsar=1,fps={fps}"
+            )
+            print(f"      crop {cw}x{ch}+{cx}+{cy} → scale {sw}x{sh} → crop {W}x{H}+{crop_x}+{crop_y}")
+        else:
+            # Pas de bord détecté : scale direct fill
+            vf_scale = (
+                f"scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
+                f"setsar=1,fps={fps}"
+            )
 
         if audio_streams:
             run(
