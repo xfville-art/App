@@ -1019,6 +1019,114 @@ def _extract_json(text):
     raise ValueError("JSON incomplet dans la réponse")
 
 
+def hook_text_generation(raw_paths, opts):
+    """
+    Génère un texte de hook percutant via Claude Vision (ANTHROPIC_API_KEY).
+    Extrait une frame JPEG du clip hook (index 0), l'envoie à claude-haiku-4-5
+    avec un prompt Crados, récupère le meilleur hook et l'injecte dans opts.
+    Ne fait rien si custom_hook déjà fourni par l'utilisateur ou si pas de clé.
+    """
+    # Ne pas écraser un hook manuel saisi dans l'app
+    if opts.get("custom_hook", "").strip():
+        print("  [HookText] Hook manuel détecté — génération IA ignorée")
+        return
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        print("  [HookText] ANTHROPIC_API_KEY absent — hook ignoré")
+        return
+
+    if not raw_paths:
+        return
+
+    hook_src = raw_paths[0]   # toujours le clip hook (index 0)
+
+    print("\n  [HookText] Génération hook via Claude Vision…")
+
+    # ── Extraire 1 frame JPEG au 1/4 du clip hook ─────────────────
+    try:
+        hook_dur = duration(hook_src)
+        seek_t   = max(0.3, hook_dur * 0.25)
+        frame_path = "_hook_frame.jpg"
+        r = subprocess.run(
+            f'ffmpeg -y -ss {seek_t:.2f} -i "{hook_src}" '
+            f'-vframes 1 -vf "scale=512:-2" -q:v 3 "{frame_path}" 2>/dev/null',
+            shell=True, capture_output=True
+        )
+        if not os.path.exists(frame_path) or os.path.getsize(frame_path) < 1000:
+            raise RuntimeError("Frame extraction échouée")
+        with open(frame_path, "rb") as _f:
+            frame_b64 = base64.b64encode(_f.read()).decode()
+        print(f"      Frame extraite @{seek_t:.2f}s  ({os.path.getsize(frame_path)//1024}KB)")
+    except Exception as e:
+        print(f"  [HookText] Extraction frame échouée : {e}")
+        return
+
+    # ── Nom du personnage depuis opts.logo ────────────────────────
+    logo = opts.get("logo", {})
+    l1   = str(logo.get("l1", "")).strip()
+    l2   = str(logo.get("l2", "")).strip()
+    perso_parts = [p for p in [l1, l2] if p and p.upper() not in ("LES","THE","GPK","CRADOS","")]
+    perso = " ".join(perso_parts) if perso_parts else "un personnage Les Crados"
+
+    # ── Appel Claude Haiku Vision ─────────────────────────────────
+    prompt_text = (
+        f"Tu es expert TikTok pour @lescrados.ai (Garbage Pail Kids français).\n"
+        f"Regarde cette image extraite d'une vidéo du personnage \"{perso}\".\n\n"
+        f"Génère LE meilleur hook TikTok possible basé sur ce que tu VOIS.\n"
+        f"Règles absolues :\n"
+        f"- 4 à 10 mots maximum\n"
+        f"- Basé sur l'action/objet/émotion VISIBLE dans l'image\n"
+        f"- Style : choc, dégoût, humour noir ou incrédulité\n"
+        f"- Commence par un verbe fort ou interjection\n"
+        f"- En français, ton familier TikTok\n"
+        f"- Zéro hashtag, zéro mention IA\n\n"
+        f"Réponds UNIQUEMENT avec le texte du hook, rien d'autre."
+    )
+
+    payload = json.dumps({
+        "model":      "claude-haiku-4-5-20251001",
+        "max_tokens": 60,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "image",  "source": {"type": "base64", "media_type": "image/jpeg", "data": frame_b64}},
+                {"type": "text",   "text": prompt_text}
+            ]
+        }]
+    }).encode()
+
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data    = payload,
+        headers = {
+            "Content-Type":      "application/json",
+            "x-api-key":         api_key,
+            "anthropic-version": "2023-06-01",
+        },
+        method = "POST"
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read().decode())
+        hook_text = body["content"][0]["text"].strip().strip('"').strip("'")
+        # Nettoyer : supprimer guillemets, hashtags, retours à la ligne
+        hook_text = hook_text.split("\n")[0].strip()
+        hook_text = hook_text.replace("#", "").strip()
+        # Tronquer à 60 chars max (sécurité FFmpeg)
+        hook_text = hook_text[:60]
+        if hook_text:
+            opts["custom_hook"] = hook_text
+            print(f"  [HookText] ✅ Hook généré : \"{hook_text}\"")
+        else:
+            print("  [HookText] Réponse vide")
+    except urllib.error.HTTPError as e:
+        print(f"  [HookText] HTTP {e.code} : {e.read().decode()[:200]}")
+    except Exception as e:
+        print(f"  [HookText] Erreur : {e}")
+
+
 def viralite_analysis(clips_raw, opts, raw_paths):
     """
     Analyse le potentiel viral TikTok des clips via GitHub Models.
@@ -1658,6 +1766,10 @@ def start():
         print(f"  Durées source   : {[round(d,2) for d in src_durs]}")
         print(f"  Durée/segment   : {[round(d,2) for d in seg_durs]}\n")
 
+
+    # ── Génération hook textuel IA (Claude Vision) ────────────────
+    print("\n  [HookText] Analyse visuelle du clip hook…")
+    hook_text_generation(raw_paths, opts)
 
     # Rendu des segments
     segments = []
