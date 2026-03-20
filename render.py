@@ -1204,19 +1204,27 @@ def start():
             ch -= ch % 2
             cx, cy = bl, bt
 
-            # Scale sur la largeur → W (conserve ratio horizontal),
-            # hauteur peut dépasser H → crop vertical centré
-            scale_h = int(ch * int(W) / cw)
-            scale_h += scale_h % 2
-            crop_y  = max(0, (scale_h - int(H)) // 2)
+            # Scale : prendre l axe qui remplit ENTIÈREMENT W×H
+            scale_by_w = int(ch * int(W) / cw)
+            scale_by_h = int(cw * int(H) / ch)
+            if scale_by_w >= int(H):
+                scale_w = int(W)
+                scale_h = scale_by_w + (scale_by_w % 2)
+            else:
+                scale_h = int(H)
+                scale_w = scale_by_h + (scale_by_h % 2)
+            scale_w = max(scale_w, int(W))
+            scale_h = max(scale_h, int(H))
+            crop_x = max(0, (scale_w - int(W)) // 2)
+            crop_y = max(0, (scale_h - int(H)) // 2)
 
             vf_scale = (
                 f"crop={cw}:{ch}:{cx}:{cy},"
-                f"scale={W}:{scale_h}:flags=lanczos,"
-                f"crop={W}:{H}:0:{crop_y},"
+                f"scale={scale_w}:{scale_h}:flags=lanczos,"
+                f"crop={W}:{H}:{crop_x}:{crop_y},"
                 f"setsar=1,fps={fps}"
             )
-            print(f"      vf: crop {cw}x{ch}+{cx}+{cy} → scale {W}x{scale_h} → crop {W}x{H}+0+{crop_y}")
+            print(f"      vf: crop {cw}x{ch}+{cx}+{cy} → scale {scale_w}x{scale_h} → crop {W}x{H}+{crop_x}+{crop_y}")
         else:
             # Pas de bords détectés : scale direct fill
             vf_scale = (
