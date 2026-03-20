@@ -8,16 +8,16 @@ on:
         required: true
         type: string
       image_base64:
-        description: 'Image source base64 (compressée 512px côté app)'
+        description: 'Image source base64 compressée'
         required: true
         type: string
       duration:
-        description: 'Durée en secondes (5 ou 10)'
+        description: 'Durée (5 ou 10)'
         required: false
         default: '5'
         type: string
       aspect_ratio:
-        description: 'Ratio vidéo (9:16, 16:9, 1:1)'
+        description: 'Ratio (9:16, 16:9, 1:1)'
         required: false
         default: '9:16'
         type: string
@@ -36,10 +36,10 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install deps
-        run: pip install requests
+      - name: Install Kaggle SDK
+        run: pip install kaggle
 
-      - name: Push kernel via Kaggle REST API v1
+      - name: Push & run kernel via Kaggle SDK
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY:      ${{ secrets.KAGGLE_KEY }}
@@ -51,10 +51,15 @@ jobs:
           ASPECT_RATIO:    ${{ inputs.aspect_ratio }}
         run: |
           python3 - << 'PYEOF'
-          import os, json, requests, time
+          import os, json, time, tempfile, shutil
+          from kaggle.api.kaggle_api_extended import KaggleApi
+
+          # Auth via env vars KAGGLE_USERNAME + KAGGLE_KEY
+          api = KaggleApi()
+          api.authenticate()
+          print("✓ Auth Kaggle OK")
 
           KG_USER  = os.environ['KAGGLE_USERNAME']
-          KG_KEY   = os.environ['KAGGLE_KEY']
           GH_TOKEN = os.environ['GH_TOKEN']
           GH_REPO  = os.environ['GH_REPO']
           PROMPT   = os.environ['PROMPT']
@@ -63,14 +68,10 @@ jobs:
           RATIO    = os.environ.get('ASPECT_RATIO', '9:16')
           RUN_ID   = str(int(time.time()))
 
-          KG_AUTH = (KG_USER, KG_KEY)
-          KG_BASE = 'https://www.kaggle.com/api/v1'
-          KERNEL_SLUG = 'viravid-i2v'
-          # title doit slugifier exactement vers KERNEL_SLUG
-          # slug = lower + replace spaces with dashes
+          KERNEL_SLUG  = 'viravid-i2v'
           KERNEL_TITLE = 'viravid i2v'
 
-          # Lire le notebook
+          # Lire le notebook template
           nb_path = '.github/workflows/wan-i2v.ipynb'
           with open(nb_path) as f:
               nb = json.load(f)
@@ -95,31 +96,34 @@ jobs:
           }
           nb['cells'].insert(0, inject)
 
-          payload = {
+          # Créer dossier temp avec notebook + kernel-metadata.json
+          tmpdir = tempfile.mkdtemp()
+          nb_file = os.path.join(tmpdir, f'{KERNEL_SLUG}.ipynb')
+          with open(nb_file, 'w') as f:
+              json.dump(nb, f)
+
+          meta = {
               "id":            f"{KG_USER}/{KERNEL_SLUG}",
               "title":         KERNEL_TITLE,
-              "newTitle":      KERNEL_TITLE,
+              "code_file":     f"{KERNEL_SLUG}.ipynb",
               "language":      "python",
-              "kernelType":    "notebook",
-              "isPrivate":     True,
-              "enableGpu":     True,
-              "enableTpu":     False,
-              "enableInternet": True,
-              "datasetDataSources":     [],
-              "kernelDataSources":      [],
-              "competitionDataSources": [],
-              "categoryIds":            [],
-              "source":        json.dumps(nb),
+              "kernel_type":   "notebook",
+              "is_private":    True,
+              "enable_gpu":    True,
+              "enable_tpu":    False,
+              "enable_internet": True,
+              "dataset_sources":     [],
+              "competition_sources": [],
+              "kernel_sources":      []
           }
+          meta_file = os.path.join(tmpdir, 'kernel-metadata.json')
+          with open(meta_file, 'w') as f:
+              json.dump(meta, f)
 
-          print(f'Push kernel {KG_USER}/{KERNEL_SLUG}...')
-          r = requests.post(f'{KG_BASE}/kernels/push', auth=KG_AUTH, json=payload, timeout=30)
-          print(f'Status: {r.status_code}  Body: {r.text[:300]}')
-
-          if r.status_code not in (200, 201):
-              raise SystemExit(f'Push échoué: {r.status_code} — {r.text[:200]}')
-
-          print(f'Kernel lancé — RUN_ID={RUN_ID}')
+          print(f'Pushing kernel {KG_USER}/{KERNEL_SLUG}...')
+          api.kernels_push(tmpdir)
+          shutil.rmtree(tmpdir)
+          print(f'✓ Kernel lancé — RUN_ID={RUN_ID}')
 
           with open('/tmp/run_id.txt', 'w') as f:
               f.write(RUN_ID)
@@ -134,13 +138,14 @@ jobs:
         run: |
           python3 - << 'PYEOF'
           import os, requests, time
+          from kaggle.api.kaggle_api_extended import KaggleApi
+
+          api = KaggleApi()
+          api.authenticate()
 
           KG_USER  = os.environ['KAGGLE_USERNAME']
-          KG_KEY   = os.environ['KAGGLE_KEY']
           GH_TOKEN = os.environ['GH_TOKEN']
           GH_REPO  = os.environ['GH_REPO']
-          KG_AUTH  = (KG_USER, KG_KEY)
-          KG_BASE  = 'https://www.kaggle.com/api/v1'
           KERNEL_SLUG = 'viravid-i2v'
 
           with open('/tmp/run_id.txt') as f:
@@ -159,28 +164,19 @@ jobs:
               time.sleep(interval)
               elapsed += interval
 
-              # Statut kernel
-              kr = requests.get(f'{KG_BASE}/kernels/{KG_USER}/{KERNEL_SLUG}',
-                                 auth=KG_AUTH, timeout=15)
-              if kr.status_code == 200:
-                  kd = kr.json()
-                  # Extraire le statut depuis la structure imbriquée
-                  lrv = kd.get('currentRunningVersion') or kd.get('lastRunningVersion') or {}
-                  if isinstance(lrv, dict):
-                      kstatus = lrv.get('status', kd.get('status', '?'))
-                  else:
-                      kstatus = str(lrv)
+              # Statut kernel via SDK
+              try:
+                  status_obj = api.kernels_status(f'{KG_USER}/{KERNEL_SLUG}')
+                  kstatus = str(status_obj.get('status', '?'))
                   print(f'[{elapsed}s] Kaggle: {kstatus}')
                   if kstatus in ('error', 'cancelAcknowledged', 'cancelled'):
-                      log_r = requests.get(
-                          f'{KG_BASE}/kernels/{KG_USER}/{KERNEL_SLUG}/output',
-                          auth=KG_AUTH, timeout=15)
-                      print('Kaggle log:', log_r.text[:800])
-                      raise SystemExit('Kernel en erreur')
-              else:
-                  print(f'[{elapsed}s] Kaggle {kr.status_code}: {kr.text[:100]}')
+                      raise SystemExit(f'Kernel en erreur: {kstatus}')
+              except SystemExit:
+                  raise
+              except Exception as e:
+                  print(f'[{elapsed}s] status error: {e}')
 
-              # Chercher la Release
+              # Chercher la Release GitHub créée par le notebook
               rel_r = requests.get(
                   f'https://api.github.com/repos/{GH_REPO}/releases/tags/{TAG}',
                   headers=GH_HEADERS, timeout=10)
@@ -188,12 +184,12 @@ jobs:
                   assets = rel_r.json().get('assets', [])
                   if assets:
                       dl_url = assets[0]['browser_download_url']
-                      print(f'Video ready: {dl_url}')
+                      print(f'✓ Vidéo prête: {dl_url}')
                       with open('/tmp/video_url.txt', 'w') as f:
                           f.write(dl_url)
                       summary = os.environ.get('GITHUB_STEP_SUMMARY', '/dev/null')
                       with open(summary, 'a') as f:
-                          f.write(f'## Video ready\n**URL:** {dl_url}\n**Tag:** `{TAG}`\n')
+                          f.write(f'## ✅ Vidéo prête\n**URL:** {dl_url}\n**Tag:** `{TAG}`\n')
                       break
               else:
                   print(f'  Release {rel_r.status_code}')
