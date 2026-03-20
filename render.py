@@ -1092,11 +1092,16 @@ def start():
 
         map_v = f"-map 0:{h264_idx}" if h264_idx is not None else "-map 0:v:0"
 
-        # ── Scale simple : conserver le format source ───────────────
-        # La source est déjà en 9:16 — on normalise simplement à W×H.
-        # Pas de crop, pas de zoom, pas de détection : juste un scale propre.
+        # ── Scale fill + zoom 10% pour couper les bords de carte ────
+        # Les sources Kling/Grok contiennent ~30px de fond de carte (gris-beige)
+        # de chaque côté. Un zoom 10% coupe 36px de chaque côté → fond retiré.
+        # force_original_aspect_ratio=increase garantit que la source remplit
+        # AU MOINS 792×1408 quelle que soit sa résolution (480p, 720p, 1080p).
+        _OW = int(W) * 110 // 100; _OW += _OW % 2
+        _OH = int(H) * 110 // 100; _OH += _OH % 2
         vf_scale = (
-            f"scale={W}:{H}:flags=lanczos,"
+            f"scale={_OW}:{_OH}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
             f"setsar=1,fps={fps}"
         )
 
