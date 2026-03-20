@@ -7,213 +7,8 @@ on:
         description: 'Prompt de génération vidéo'
         required: true
         type: string
-      image_url:
-        description: 'URL de l image source (Gist raw URL)'
-        required: true
-        type: string
-      duration:
-        description: 'Durée de la vidéo (5 ou 10)'
-        required: false
-        default: '5'
-        type: string
-      aspect_ratio:
-        description: 'Ratio (9:16, 16:9, 1:1)'
-        required: false
-        default: '9:16'
-        type: string
-      cfg_scale:
-        description: 'Niveau de créativité (0.1 à 1.0)'
-        required: false
-        default: '0.5'
-        type: string
-
-jobs:
-  generate-video:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install requests python-jose
-
-      - name: Generate video with Kling AI
-        id: kling
-        env:
-          KLING_ACCESS_KEY: ${{ secrets.KLING_ACCESS_KEY }}
-          KLING_SECRET_KEY: ${{ secrets.KLING_SECRET_KEY }}
-          PROMPT: ${{ inputs.prompt }}
-          IMAGE_URL: ${{ inputs.image_url }}
-          DURATION: ${{ inputs.duration }}
-          ASPECT_RATIO: ${{ inputs.aspect_ratio }}
-          CFG_SCALE: ${{ inputs.cfg_scale }}
-        run: |
-          python3 << 'PYEOF'
-          import os, sys, time, json, requests, base64
-          from datetime import datetime
-
-          ACCESS_KEY = os.environ['KLING_ACCESS_KEY']
-          SECRET_KEY = os.environ['KLING_SECRET_KEY']
-          PROMPT     = os.environ['PROMPT']
-          IMAGE_URL  = os.environ['IMAGE_URL']
-          DURATION   = int(os.environ.get('DURATION', '5'))
-          RATIO      = os.environ.get('ASPECT_RATIO', '9:16')
-          CFG        = float(os.environ.get('CFG_SCALE', '0.5'))
-
-          BASE_URL = "https://api.klingai.com"
-
-          # ── JWT token ──────────────────────────────────────────────────────
-          def make_jwt():
-              try:
-                  from jose import jwt as jose_jwt
-                  now = int(time.time())
-                  payload = {
-                      "iss": ACCESS_KEY,
-                      "exp": now + 1800,
-                      "nbf": now - 5
-                  }
-                  return jose_jwt.encode(payload, SECRET_KEY, algorithm="HS256")
-              except Exception as e:
-                  print(f"JWT error: {e}", flush=True)
-                  sys.exit(1)
-
-          def headers():
-              return {
-                  "Authorization": f"Bearer {make_jwt()}",
-                  "Content-Type": "application/json"
-              }
-
-          # ── Télécharger l'image depuis le Gist (contenu = base64 brut) ────
-          print(f"📥 Récupération de l'image depuis Gist…", flush=True)
-          gr = requests.get(IMAGE_URL, timeout=30)
-          gr.raise_for_status()
-          IMG_B64 = gr.text.strip()
-          img_bytes_len = len(base64.b64decode(IMG_B64))
-          print(f"✓ Image récupérée: {img_bytes_len/1024:.1f} KB", flush=True)
-
-          # ── Create image-to-video task ─────────────────────────────────────
-          print("🚀 Création de la tâche Kling AI…", flush=True)
-          payload = {
-              "model_name": "kling-v1",
-              "image": IMG_B64,
-              "prompt": PROMPT,
-              "negative_prompt": "blur, distortion, low quality, watermark",
-              "cfg_scale": CFG,
-              "mode": "std",
-              "duration": DURATION,
-              "aspect_ratio": RATIO
-          }
-
-          r = requests.post(
-              f"{BASE_URL}/v1/videos/image2video",
-              headers=headers(),
-              json=payload,
-              timeout=30
-          )
-
-          if r.status_code not in (200, 201):
-              print(f"✗ Erreur API Kling: {r.status_code} — {r.text}", flush=True)
-              sys.exit(1)
-
-          data = r.json()
-          print(f"✓ Réponse Kling: {json.dumps(data, indent=2)[:400]}", flush=True)
-
-          task_id = data.get("data", {}).get("task_id")
-          if not task_id:
-              print(f"✗ task_id introuvable dans: {data}", flush=True)
-              sys.exit(1)
-
-          print(f"✓ Task ID: {task_id}", flush=True)
-
-          # ── Poll task status ───────────────────────────────────────────────
-          print("⏳ Attente de la génération…", flush=True)
-          video_url = None
-          max_wait  = 600  # 10 min
-          interval  = 10
-          elapsed   = 0
-
-          while elapsed < max_wait:
-              time.sleep(interval)
-              elapsed += interval
-
-              r = requests.get(
-                  f"{BASE_URL}/v1/videos/image2video/{task_id}",
-                  headers=headers(),
-                  timeout=15
-              )
-
-              if r.status_code != 200:
-                  print(f"  Polling erreur {r.status_code}", flush=True)
-                  continue
-
-              task = r.json().get("data", {})
-              status = task.get("task_status", "unknown")
-              print(f"  [{elapsed}s] Status: {status}", flush=True)
-
-              if status == "succeed":
-                  works = task.get("task_result", {}).get("videos", [])
-                  if works:
-                      video_url = works[0].get("url")
-                      break
-                  else:
-                      print("✗ Aucune vidéo dans le résultat", flush=True)
-                      sys.exit(1)
-
-              elif status == "failed":
-                  reason = task.get("task_status_msg", "inconnu")
-                  print(f"✗ Génération échouée: {reason}", flush=True)
-                  sys.exit(1)
-
-          if not video_url:
-              print("✗ Timeout: génération trop longue", flush=True)
-              sys.exit(1)
-
-          # ── Download video ─────────────────────────────────────────────────
-          print(f"📥 Téléchargement MP4: {video_url[:80]}…", flush=True)
-          vr = requests.get(video_url, timeout=120, stream=True)
-          vr.raise_for_status()
-
-          out_path = "/tmp/kling_output.mp4"
-          with open(out_path, "wb") as f:
-              for chunk in vr.iter_content(chunk_size=8192):
-                  f.write(chunk)
-
-          size_mb = os.path.getsize(out_path) / 1048576
-          print(f"✓ MP4 téléchargé: {size_mb:.1f} MB → {out_path}", flush=True)
-
-          PYEOF
-
-      - name: Upload video artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: kling-video
-          path: /tmp/kling_output.mp4
-          retention-days: 7
-          if-no-files-found: error
-
-      - name: Summary
-        run: |
-          echo "## ✅ Vidéo générée avec succès" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Prompt:** ${{ inputs.prompt }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Durée:** ${{ inputs.duration }}s — **Ratio:** ${{ inputs.aspect_ratio }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📦 L'artifact \`kling-video\` contient le fichier MP4." >> $GITHUB_STEP_SUMMARY
-
-
-on:
-  workflow_dispatch:
-    inputs:
-      prompt:
-        description: 'Prompt de génération vidéo'
-        required: true
-        type: string
       image_base64:
-        description: 'Image source encodée en base64'
+        description: 'Image source encodée en base64 (max 512px, JPEG compressé)'
         required: true
         type: string
       duration:
@@ -258,8 +53,7 @@ jobs:
           CFG_SCALE: ${{ inputs.cfg_scale }}
         run: |
           python3 << 'PYEOF'
-          import os, sys, time, json, requests, base64, hmac, hashlib
-          from datetime import datetime
+          import os, sys, time, json, requests, base64
 
           ACCESS_KEY = os.environ['KLING_ACCESS_KEY']
           SECRET_KEY = os.environ['KLING_SECRET_KEY']
@@ -276,32 +70,21 @@ jobs:
               try:
                   from jose import jwt as jose_jwt
                   now = int(time.time())
-                  payload = {
-                      "iss": ACCESS_KEY,
-                      "exp": now + 1800,
-                      "nbf": now - 5
-                  }
+                  payload = {"iss": ACCESS_KEY, "exp": now + 1800, "nbf": now - 5}
                   return jose_jwt.encode(payload, SECRET_KEY, algorithm="HS256")
               except Exception as e:
                   print(f"JWT error: {e}", flush=True)
                   sys.exit(1)
 
           def headers():
-              return {
-                  "Authorization": f"Bearer {make_jwt()}",
-                  "Content-Type": "application/json"
-              }
+              return {"Authorization": f"Bearer {make_jwt()}", "Content-Type": "application/json"}
 
-          # ── Save image to temp file & re-encode ────────────────────────────
-          print("📤 Préparation de l'image...", flush=True)
+          # ── Vérification taille image ──────────────────────────────────────
           img_bytes = base64.b64decode(IMG_B64)
-          img_path = "/tmp/source_image.jpg"
-          with open(img_path, "wb") as f:
-              f.write(img_bytes)
-          print(f"✓ Image: {len(img_bytes)/1024:.1f} KB", flush=True)
+          print(f"✓ Image reçue: {len(img_bytes)/1024:.1f} KB", flush=True)
 
           # ── Create image-to-video task ─────────────────────────────────────
-          print("🚀 Création de la tâche Kling AI...", flush=True)
+          print("🚀 Création tâche Kling AI…", flush=True)
           payload = {
               "model_name": "kling-v1",
               "image": IMG_B64,
@@ -313,84 +96,60 @@ jobs:
               "aspect_ratio": RATIO
           }
 
-          r = requests.post(
-              f"{BASE_URL}/v1/videos/image2video",
-              headers=headers(),
-              json=payload,
-              timeout=30
-          )
+          r = requests.post(f"{BASE_URL}/v1/videos/image2video",
+                            headers=headers(), json=payload, timeout=30)
 
           if r.status_code not in (200, 201):
-              print(f"✗ Erreur API: {r.status_code} — {r.text}", flush=True)
+              print(f"✗ Erreur API Kling: {r.status_code} — {r.text}", flush=True)
               sys.exit(1)
 
           data = r.json()
-          print(f"✓ Réponse: {json.dumps(data, indent=2)[:300]}", flush=True)
-
           task_id = data.get("data", {}).get("task_id")
           if not task_id:
-              print(f"✗ task_id introuvable dans: {data}", flush=True)
+              print(f"✗ task_id introuvable: {data}", flush=True)
               sys.exit(1)
-
           print(f"✓ Task ID: {task_id}", flush=True)
 
           # ── Poll task status ───────────────────────────────────────────────
-          print("⏳ Attente de la génération...", flush=True)
+          print("⏳ Attente génération…", flush=True)
           video_url = None
-          max_wait  = 600  # 10 min
-          interval  = 10
-          elapsed   = 0
+          max_wait, interval, elapsed = 600, 10, 0
 
           while elapsed < max_wait:
               time.sleep(interval)
               elapsed += interval
-
-              r = requests.get(
-                  f"{BASE_URL}/v1/videos/image2video/{task_id}",
-                  headers=headers(),
-                  timeout=15
-              )
-
+              r = requests.get(f"{BASE_URL}/v1/videos/image2video/{task_id}",
+                               headers=headers(), timeout=15)
               if r.status_code != 200:
                   print(f"  Polling erreur {r.status_code}", flush=True)
                   continue
-
-              task = r.json().get("data", {})
+              task   = r.json().get("data", {})
               status = task.get("task_status", "unknown")
-              print(f"  [{elapsed}s] Status: {status}", flush=True)
-
+              print(f"  [{elapsed}s] {status}", flush=True)
               if status == "succeed":
                   works = task.get("task_result", {}).get("videos", [])
                   if works:
                       video_url = works[0].get("url")
                       break
-                  else:
-                      print("✗ Aucune vidéo dans le résultat", flush=True)
-                      sys.exit(1)
-
+                  print("✗ Aucune vidéo dans le résultat", flush=True)
+                  sys.exit(1)
               elif status == "failed":
-                  reason = task.get("task_status_msg", "inconnu")
-                  print(f"✗ Génération échouée: {reason}", flush=True)
+                  print(f"✗ Génération échouée: {task.get('task_status_msg','?')}", flush=True)
                   sys.exit(1)
 
           if not video_url:
-              print("✗ Timeout: la génération a pris trop de temps", flush=True)
+              print("✗ Timeout", flush=True)
               sys.exit(1)
 
           # ── Download video ─────────────────────────────────────────────────
-          print(f"📥 Téléchargement: {video_url[:80]}...", flush=True)
+          print(f"📥 Téléchargement MP4…", flush=True)
           vr = requests.get(video_url, timeout=120, stream=True)
           vr.raise_for_status()
-
           out_path = "/tmp/kling_output.mp4"
           with open(out_path, "wb") as f:
               for chunk in vr.iter_content(chunk_size=8192):
                   f.write(chunk)
-
-          size_mb = os.path.getsize(out_path) / 1048576
-          print(f"✓ Vidéo téléchargée: {size_mb:.1f} MB → {out_path}", flush=True)
-          print("VIDEO_PATH=/tmp/kling_output.mp4", flush=True)
-
+          print(f"✓ MP4: {os.path.getsize(out_path)/1048576:.1f} MB", flush=True)
           PYEOF
 
       - name: Upload video artifact
@@ -403,9 +162,6 @@ jobs:
 
       - name: Summary
         run: |
-          echo "## ✅ Vidéo générée avec succès" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ Vidéo générée" >> $GITHUB_STEP_SUMMARY
           echo "**Prompt:** ${{ inputs.prompt }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Durée:** ${{ inputs.duration }}s — **Ratio:** ${{ inputs.aspect_ratio }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📦 L'artifact \`kling-video\` contient le fichier MP4." >> $GITHUB_STEP_SUMMARY
+          echo "**Durée:** ${{ inputs.duration }}s | **Ratio:** ${{ inputs.aspect_ratio }}" >> $GITHUB_STEP_SUMMARY
