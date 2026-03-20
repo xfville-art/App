@@ -1,0 +1,220 @@
+name: Wan2.1 Image-to-Video (Kaggle GPU)
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: 'Prompt de génération vidéo'
+        required: true
+        type: string
+      image_base64:
+        description: 'Image source base64 (compressée 512px côté app)'
+        required: true
+        type: string
+      duration:
+        description: 'Durée en secondes (5 ou 10)'
+        required: false
+        default: '5'
+        type: string
+      aspect_ratio:
+        description: 'Ratio vidéo (9:16, 16:9, 1:1)'
+        required: false
+        default: '9:16'
+        type: string
+
+jobs:
+  launch-kaggle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Kaggle CLI
+        run: pip install kaggle
+
+      - name: Configure Kaggle credentials
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY:      ${{ secrets.KAGGLE_KEY }}
+        run: |
+          mkdir -p ~/.kaggle
+          echo '{"username":"'"$KAGGLE_USERNAME"'","key":"'"$KAGGLE_KEY"'"}' > ~/.kaggle/kaggle.json
+          chmod 600 ~/.kaggle/kaggle.json
+
+      - name: Prepare & push notebook to Kaggle
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          GH_TOKEN:        ${{ secrets.GITHUB_TOKEN }}
+          PROMPT:          ${{ inputs.prompt }}
+          IMAGE_BASE64:    ${{ inputs.image_base64 }}
+          DURATION:        ${{ inputs.duration }}
+          ASPECT_RATIO:    ${{ inputs.aspect_ratio }}
+          GH_REPO:         ${{ github.repository }}
+        run: |
+          python3 << 'PYEOF'
+          import os, json, subprocess, base64, time
+
+          KAGGLE_USER = os.environ['KAGGLE_USERNAME']
+          KERNEL_SLUG = 'viravid-i2v'
+          NB_PATH     = '.github/workflows/wan-i2v.ipynb'
+          RUN_ID      = str(int(time.time()))
+
+          # Injecter les env vars dans le notebook via une cellule d'init
+          with open(NB_PATH) as f:
+              nb = json.load(f)
+
+          inject_cell = {
+              "cell_type": "code",
+              "execution_count": None,
+              "metadata": {},
+              "outputs": [],
+              "source": [
+                  "import os\n",
+                  f"os.environ['PROMPT']        = {json.dumps(os.environ['PROMPT'])}\n",
+                  f"os.environ['IMAGE_BASE64']  = {json.dumps(os.environ['IMAGE_BASE64'])}\n",
+                  f"os.environ['DURATION']      = {json.dumps(os.environ['DURATION'])}\n",
+                  f"os.environ['ASPECT_RATIO']  = {json.dumps(os.environ['ASPECT_RATIO'])}\n",
+                  f"os.environ['GH_TOKEN']      = {json.dumps(os.environ['GH_TOKEN'])}\n",
+                  f"os.environ['GH_REPO']       = {json.dumps(os.environ['GH_REPO'])}\n",
+                  f"os.environ['RUN_ID']        = {json.dumps(RUN_ID)}\n",
+                  "print('✓ Env vars injectées')\n"
+              ]
+          }
+          # Insérer en première cellule (avant les autres)
+          nb['cells'].insert(0, inject_cell)
+
+          patched_nb = f'/tmp/{KERNEL_SLUG}.ipynb'
+          with open(patched_nb, 'w') as f:
+              json.dump(nb, f)
+
+          # kernel-metadata.json pour push Kaggle
+          meta = {
+              "id": f"{KAGGLE_USER}/{KERNEL_SLUG}",
+              "title": "ViraCut i2v",
+              "code_file": f"{KERNEL_SLUG}.ipynb",
+              "language": "python",
+              "kernel_type": "notebook",
+              "is_private": True,
+              "enable_gpu": True,
+              "enable_internet": True,
+              "dataset_sources": [],
+              "competition_sources": [],
+              "kernel_sources": []
+          }
+          import shutil
+          tmpdir = f'/tmp/kaggle_push_{RUN_ID}'
+          os.makedirs(tmpdir, exist_ok=True)
+          shutil.copy(patched_nb, f'{tmpdir}/{KERNEL_SLUG}.ipynb')
+          with open(f'{tmpdir}/kernel-metadata.json', 'w') as f:
+              json.dump(meta, f)
+
+          # Push (crée ou met à jour le kernel)
+          result = subprocess.run(
+              ['kaggle', 'kernels', 'push', '-p', tmpdir],
+              capture_output=True, text=True
+          )
+          print(result.stdout)
+          if result.returncode != 0:
+              print('STDERR:', result.stderr)
+              raise SystemExit(1)
+
+          # Sauvegarder RUN_ID pour le step suivant
+          with open('/tmp/run_id.txt', 'w') as f:
+              f.write(RUN_ID)
+
+          print(f'✓ Kernel pushé — RUN_ID: {RUN_ID}')
+          PYEOF
+
+      - name: Poll Kaggle kernel + wait for GitHub Release
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY:      ${{ secrets.KAGGLE_KEY }}
+          GH_TOKEN:        ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO:         ${{ github.repository }}
+        run: |
+          python3 << 'PYEOF'
+          import os, subprocess, json, time, requests
+
+          KAGGLE_USER = os.environ['KAGGLE_USERNAME']
+          KERNEL_SLUG = 'viravid-i2v'
+          GH_TOKEN    = os.environ['GH_TOKEN']
+          GH_REPO     = os.environ['GH_REPO']
+
+          with open('/tmp/run_id.txt') as f:
+              RUN_ID = f.read().strip()
+
+          TAG = f'viravid-{RUN_ID}'
+          GH_HEADERS = {
+              'Authorization': f'token {GH_TOKEN}',
+              'Accept': 'application/vnd.github.v3+json'
+          }
+
+          print(f'⏳ Attente kernel Kaggle + Release GitHub (tag: {TAG})…')
+          max_wait = 1200  # 20 min
+          interval = 20
+          elapsed  = 0
+
+          while elapsed < max_wait:
+              time.sleep(interval)
+              elapsed += interval
+
+              # Vérifier statut kernel Kaggle
+              r = subprocess.run(
+                  ['kaggle', 'kernels', 'status', f'{KAGGLE_USER}/{KERNEL_SLUG}'],
+                  capture_output=True, text=True
+              )
+              status_line = r.stdout.strip()
+              print(f'[{elapsed}s] Kaggle: {status_line}')
+
+              if 'error' in status_line.lower():
+                  # Récupérer les logs pour debug
+                  log_r = subprocess.run(
+                      ['kaggle', 'kernels', 'output', f'{KAGGLE_USER}/{KERNEL_SLUG}', '-p', '/tmp/'],
+                      capture_output=True, text=True
+                  )
+                  print('Kaggle logs:', log_r.stdout[:500])
+                  raise SystemExit('Kernel Kaggle en erreur')
+
+              # Chercher la Release GitHub créée par le notebook
+              rel_r = requests.get(
+                  f'https://api.github.com/repos/{GH_REPO}/releases/tags/{TAG}',
+                  headers=GH_HEADERS, timeout=10
+              )
+
+              if rel_r.status_code == 200:
+                  assets = rel_r.json().get('assets', [])
+                  if assets:
+                      dl_url = assets[0]['browser_download_url']
+                      print(f'✓ Release trouvée: {dl_url}')
+                      # Écrire l'URL en output pour l'app via job summary
+                      with open(os.environ.get('GITHUB_STEP_SUMMARY', '/dev/null'), 'a') as f:
+                          f.write(f'## ✅ Vidéo prête\n')
+                          f.write(f'**URL:** {dl_url}\n')
+                          f.write(f'**Tag:** `{TAG}`\n')
+                      # Aussi dans un artifact texte pour que l'app puisse le lire
+                      with open('/tmp/video_url.txt', 'w') as f:
+                          f.write(dl_url)
+                      print(f'VIRAVID_URL={dl_url}')
+                      break
+              else:
+                  print(f'  Release pas encore dispo ({rel_r.status_code})')
+
+          else:
+              raise SystemExit('Timeout — Kaggle > 20 min')
+
+          PYEOF
+
+      - name: Upload video URL as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-url
+          path: /tmp/video_url.txt
+          retention-days: 1
+          if-no-files-found: warn
