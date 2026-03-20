@@ -1781,9 +1781,9 @@ function runPhaseToStep(run){
 
 async function monitor(){
   try{
-    const res=await fetch(`https://api.github.com/repos/${repo}/actions/runs?per_page=5`,{headers:{'Authorization':`Bearer ${token}`}}).then(r=>r.json());
+    const res=await fetch(`https://api.github.com/repos/${repo}/actions/workflows/${wfFile}/runs?per_page=5`,{headers:{'Authorization':`Bearer ${token}`}}).then(r=>r.json());
     const runs=res.workflow_runs||[];
-    const run=dispatchTime?runs.find(r=>new Date(r.created_at)>=new Date(dispatchTime)-30000&&!(r.name||'').toLowerCase().includes('analyz')):runs.find(r=>!(r.name||'').toLowerCase().includes('analyz'));
+    const run=dispatchTime?runs.find(r=>new Date(r.created_at)>=new Date(dispatchTime)-30000):runs[0];
     if(!run){setTimeout(monitor,5000);return;}
     const ll=document.getElementById('logsLink');ll.style.display='block';ll.href=run.html_url;
     const s=Math.floor((Date.now()-startTime)/1000);
@@ -1930,7 +1930,11 @@ async function doDirectDownload(){
 }
 
 function doArtifactPage(){
-  window.open(_currentRunUrl,'_blank');
+  // URL directe vers la page artifacts du run VIRACUT (pas html_url qui peut pointer ailleurs)
+  const artifactsUrl=_currentRunId
+    ?`https://github.com/${repo}/actions/runs/${_currentRunId}/artifacts`
+    :_currentRunUrl;
+  window.open(artifactsUrl,'_blank');
   dlClose();
 }
 
