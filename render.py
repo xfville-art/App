@@ -1092,20 +1092,14 @@ def start():
 
         map_v = f"-map 0:{h264_idx}" if h264_idx is not None else "-map 0:v:0"
 
-        # ── Scale-fill 9:16 avec overscan ────────────────────────────
-        # Stratégie : scale à 108% puis crop centré à la résolution cible.
-        # L'overscan de 8% élimine systématiquement les bords de carte Crados
-        # (cadre gris/beige, vignette source) quelle que soit la source,
-        # sans dépendre d'un cropdetect fragile sur des couleurs non-noires.
-        OVERSCAN = 1.08
-        OW = int(int(W) * OVERSCAN)
-        OH = int(int(H) * OVERSCAN)
-        # S'assurer que OW et OH sont pairs (exigence libx264)
-        OW = OW + (OW % 2)
-        OH = OH + (OH % 2)
-
+        # ── Scale-fill 9:16 plein écran ──────────────────────────────
+        # 1. Overscan 15% sur les dimensions source (iw/ih) → bords sortent du cadre
+        # 2. scale=W:H exact → remplit tout le canvas 9:16 sans bandes
+        # 3. crop=W:H centré → sécurité pixel pair
+        # Pas de force_original_aspect_ratio : on veut remplir, pas letterboxer.
         vf_scale = (
-            f"scale={OW}:{OH}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"scale=iw*1.15:ih*1.15:flags=lanczos,"
+            f"scale={W}:{H}:flags=lanczos,"
             f"crop={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
             f"setsar=1,fps={fps}"
         )
