@@ -326,13 +326,11 @@ def build_logo_splash(out, opts):
     # Scanlines CRT — geq (1 seul filtre, évite l'overflow filter_complex)
     scanlines = ["geq=lum='if(mod(Y,4),lum(X\\,Y),lum(X\\,Y)*0.78)':cb='cb(X\\,Y)':cr='cr(X\\,Y)'"]
 
-    # Vignette simulée par drawbox (vignette= absent sur runners GitHub)
-    vig = int(min(Wi, Hi) * 0.18)
+    # Vignette latérale légère uniquement — pas de bandes haut/bas sur le logo
+    vig = int(min(Wi, Hi) * 0.08)
     vignette_parts = [
-        f"drawbox=x=0:y=0:w={Wi}:h={vig}:color=black@0.55:t=fill",
-        f"drawbox=x=0:y={Hi-vig}:w={Wi}:h={vig}:color=black@0.55:t=fill",
-        f"drawbox=x=0:y=0:w={vig}:h={Hi}:color=black@0.40:t=fill",
-        f"drawbox=x={Wi-vig}:y=0:w={vig}:h={Hi}:color=black@0.40:t=fill",
+        f"drawbox=x=0:y=0:w={vig}:h={Hi}:color=black@0.30:t=fill",
+        f"drawbox=x={Wi-vig}:y=0:w={vig}:h={Hi}:color=black@0.30:t=fill",
     ]
 
     # format=yuv420p obligatoire avant fade sur source lavfi (rgb24 sinon)
@@ -618,14 +616,12 @@ def build_cinema_overlay_no_text(opts):
     fade_out_st  = max(0.0, total - fade_out_d)
     fade_in_d    = 0.25
 
-    # Letterbox supprimée — format d'origine conservé plein écran
-    # Vignette par drawbox (vignette= absent sur runners GitHub Actions)
-    vig2 = int(min(Wi, Hi) * 0.15)
+    # Pas de letterbox, pas de vignette haut/bas — format d'origine plein écran
+    # Légère vignette latérale uniquement (côtés gauche/droite, très transparente)
+    vig2 = int(min(Wi, Hi) * 0.08)
     vig_filter = (
-        f"drawbox=x=0:y=0:w={Wi}:h={vig2}:color=black@0.40:t=fill,"
-        f"drawbox=x=0:y={Hi-vig2}:w={Wi}:h={vig2}:color=black@0.40:t=fill,"
-        f"drawbox=x=0:y=0:w={vig2}:h={Hi}:color=black@0.28:t=fill,"
-        f"drawbox=x={Wi-vig2}:y=0:w={vig2}:h={Hi}:color=black@0.28:t=fill"
+        f"drawbox=x=0:y=0:w={vig2}:h={Hi}:color=black@0.18:t=fill,"
+        f"drawbox=x={Wi-vig2}:y=0:w={vig2}:h={Hi}:color=black@0.18:t=fill"
     )
     fades = f"fade=t=in:st=0:d={fade_in_d},fade=t=out:st={fade_out_st:.2f}:d={fade_out_d}"
     vf = f"{vig_filter},{fades}"
@@ -963,14 +959,13 @@ def apply_subtitles(input_video, output_video, subtitles, opts):
     W_px  = int(W_str)
     H_px  = int(H_str)
     crf   = cfg(opts, "crf")
-    lb_h  = cfg(opts, "cinema_lb_h")
 
     # Taille police : 4.2% de la hauteur vidéo
     font_size = max(36, int(H_px * 0.042))
 
-    # Zone sous-titre : au-dessus de la letterbox basse
+    # Zone sous-titre : bas de l'écran (sans letterbox)
     zone_h = int(H_px * 0.095)
-    band_y = H_px - lb_h - zone_h
+    band_y = H_px - zone_h - int(H_px * 0.03)   # 3% marge basse
     text_y = band_y + zone_h // 2
 
     try:
