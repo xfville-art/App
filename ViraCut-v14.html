@@ -2113,14 +2113,20 @@ async function monitorViraAnalysis(btn,attempt){
 }
 function applyRecommendedConfig(data){
   const rc=data.recommended_config;if(!rc)return;
+  // Mode
   if(rc.mode)setMode(rc.mode);
+  // Durées
   if(rc.hook_dur!==undefined){const el=document.getElementById('rHook');el.value=Math.min(Math.max(rc.hook_dur,parseFloat(el.min)),parseFloat(el.max));rng(el,'vHook');}
   if(rc.core_dur!==undefined){const el=document.getElementById('rCore');el.value=Math.min(Math.max(rc.core_dur,parseFloat(el.min)),parseFloat(el.max));rng(el,'vCore');}
   if(rc.punch_dur!==undefined){const el=document.getElementById('rPunch');el.value=Math.min(Math.max(rc.punch_dur,parseFloat(el.min)),parseFloat(el.max));rng(el,'vPunch');}
+  if(rc.cinema_dur!==undefined){const el=document.getElementById('rCinDur');if(el){el.value=Math.min(Math.max(rc.cinema_dur,parseFloat(el.min)||8),parseFloat(el.max)||60);rng(el,'vCinDur');}}
+  // Effets
   if(rc.flash_cut!==undefined)document.getElementById('oFlash').checked=rc.flash_cut;
-  if(rc.zoom_punch!==undefined)document.getElementById('oZoom').checked=rc.zoom_punch;
+  if(rc.zoom_punch!==undefined){const el=document.getElementById('oZoom');if(el)el.checked=rc.zoom_punch;}
   if(rc.ai_text!==undefined)document.getElementById('oText').checked=rc.ai_text;
+  if(rc.stickers!==undefined)document.getElementById('oStickers').checked=rc.stickers;
   updateChips();
+  // Ordre clips
   if(rc.clip_order&&Array.isArray(rc.clip_order)&&rc.clip_order.length===clips.length){_recommendedClipOrder=rc.clip_order;clips=rc.clip_order.map(i=>clips[i]);renderFileList();}
   showApplyBanner(data);
   if(clips.length)buildStoryboard();
@@ -2131,8 +2137,12 @@ function showApplyBanner(data){
   if(rc.mode)summary.push(`Mode → ${rc.mode.toUpperCase()}`);
   if(rc.clip_order)summary.push('Clips réordonnés');
   if(rc.hook_dur)summary.push(`Hook ${rc.hook_dur}s`);
+  if(rc.cinema_dur)summary.push(`Durée ${rc.cinema_dur}s`);
+  if(rc.stickers!==undefined)summary.push(rc.stickers?'Stickers ✓':'Stickers ✗');
+  if(rc.dialogue_cut)summary.push('Dialogue cut ✓');
+  if(rc.grade_saturation&&rc.grade_saturation>1.2)summary.push(`Sat ×${rc.grade_saturation}`);
   const banner=document.createElement('div');banner.className='apply-bar';
-  banner.innerHTML=`<span class="apply-bar-text">✓ Config optimisée appliquée — ${summary.join(' · ')}</span><button class="btn-apply" onclick="tab(0)">Lancer →</button>`;
+  banner.innerHTML=`<span class="apply-bar-text">✓ Montage optimisé — ${summary.join(' · ')}</span><button class="btn-apply" onclick="tab(0)">Lancer →</button>`;
   body.appendChild(banner);
   document.getElementById('launchBtn').disabled=false;
   document.getElementById('td0').classList.add('show');
@@ -2478,12 +2488,11 @@ window.selectLogoTheme=selectLogoTheme;
 window.updateLogoPreview=updateLogoPreview;
 
 /* ══════════════════════════════════════════════════════════
-   HOOK MASTER ENGINE v13
-   - Détecte le sujet depuis les noms de fichiers clips
-   - Se déclenche automatiquement après analyzeViralite()
-   - Affiche 3 hooks dans le bloc Viralité (onglet Clips)
-   - Miroir dans l'onglet IA Hook (bonus)
-   - Bouton "Appliquer" par hook → remplit cHook + Logo L1/L2
+   HOOK MASTER ENGINE v14 — VISION IA
+   - Extrait une frame clé de chaque clip via canvas
+   - Envoie les frames + contexte à Claude (API Anthropic)
+   - Génère 3 hooks basés sur le contenu VISUEL réel
+   - Fallback local si pas de clé API
 ══════════════════════════════════════════════════════════ */
 
 /* ── DATA ── */
@@ -2532,25 +2541,126 @@ const _HM_TMPL=[
 ];
 
 /* ── STATE ── */
-let _hmHooks=[], _hmKw='';
+let _hmHooks=[], _hmKw='', _hmVisionDone=false;
 
-/* ── KEYWORD from filenames ── */
+/* ── EXTRACT FRAME from video file → base64 JPEG ── */
+function _hmExtractFrame(file, timeRatio=0.3){
+  return new Promise((resolve)=>{
+    const video=document.createElement('video');
+    video.muted=true; video.playsInline=true;
+    const url=URL.createObjectURL(file);
+    video.src=url;
+    const cleanup=()=>{ try{URL.revokeObjectURL(url);}catch(e){} };
+    video.addEventListener('error',()=>{ cleanup(); resolve(null); });
+    video.addEventListener('loadedmetadata',()=>{
+      video.currentTime=Math.min(Math.max(video.duration*timeRatio,0.3), video.duration-0.1);
+    });
+    video.addEventListener('seeked',()=>{
+      try{
+        const canvas=document.createElement('canvas');
+        // 480x270 pour API légère
+        const W=480, H=Math.round(480*video.videoHeight/video.videoWidth)||270;
+        canvas.width=W; canvas.height=H;
+        canvas.getContext('2d').drawImage(video,0,0,W,H);
+        const b64=canvas.toDataURL('image/jpeg',0.7).split(',')[1];
+        cleanup(); resolve(b64);
+      }catch(e){ cleanup(); resolve(null); }
+    });
+    video.load();
+  });
+}
+
+/* ── CALL CLAUDE VISION API ── */
+async function _hmVisionAnalyze(){
+  if(!anthropicApiKey) return null;
+  if(!clips.length) return null;
+
+  // Extraire frames des clips (max 3)
+  const targets=clips.slice(0,3);
+  const frames=await Promise.all(targets.map((c,i)=>_hmExtractFrame(c.file, i===0?0.2:i===1?0.4:0.6)));
+  const validFrames=frames.filter(Boolean);
+  if(!validFrames.length) return null;
+
+  // Contexte personnage
+  const l2=(document.getElementById('logoL2')?.value||'').trim();
+  const l1=(document.getElementById('logoL1')?.value||'').trim();
+  const perso=l2&&l2!=='CRADOS'?(l1&&!['LES','THE','GPK'].includes(l1.toUpperCase())?l1+' '+l2:l2):'un personnage Les Crados';
+
+  // Construire le message avec les images
+  const imageContent=validFrames.map(b64=>({
+    type:'image',
+    source:{type:'base64',media_type:'image/jpeg',data:b64}
+  }));
+
+  const prompt=`Tu es un expert en marketing viral TikTok pour la chaîne @lescrados.ai.
+Analyse ces images extraites d'une vidéo mettant en scène "${perso}" — un personnage de carte à collectionner style "Les Crados" (Garbage Pail Kids).
+
+Génère exactement 3 hooks TikTok en français pour cette vidéo.
+Règles :
+- Basé UNIQUEMENT sur ce que tu VOIS dans les images (action, émotion, objet, situation)
+- Style absurde, trash, choc ou humour noir — fidèle à l'esthétique Crados
+- Maximum 15 mots par hook
+- Pas de mention de Grok, IA, ou technologie
+- Commence par un verbe d'action ou une interpellation directe
+- Inclure au moins une de ces émotions : dégoût, choc, hilarité, incrédulité
+
+Réponds UNIQUEMENT avec un JSON valide, sans texte avant ou après :
+{
+  "hooks": [
+    {"text": "...", "type": "Choc", "emoji": "💥"},
+    {"text": "...", "type": "Humour", "emoji": "😂"},
+    {"text": "...", "type": "Curiosité", "emoji": "🔍"}
+  ],
+  "visual_description": "description courte de ce que tu vois (1 phrase)"
+}`;
+
+  try{
+    const resp=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-api-key':anthropicApiKey,'anthropic-version':'2023-06-01'},
+      body:JSON.stringify({
+        model:'claude-haiku-4-5-20251001',
+        max_tokens:400,
+        messages:[{role:'user',content:[...imageContent,{type:'text',text:prompt}]}]
+      })
+    });
+    if(!resp.ok) return null;
+    const data=await resp.json();
+    const raw=data?.content?.[0]?.text||'';
+    const start=raw.indexOf('{'), end=raw.lastIndexOf('}');
+    if(start===-1||end===-1) return null;
+    return JSON.parse(raw.slice(start,end+1));
+  }catch(e){
+    console.warn('[HookMaster Vision]',e);
+    return null;
+  }
+}
+
+/* ── KEYWORD from logo name or filenames ── */
 function _hmKwFromClips(){
+  const l2=(document.getElementById('logoL2')?.value||'').trim();
+  if(l2&&l2!=='CRADOS'&&l2.length>2){
+    return l2.toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());
+  }
+  const l1=(document.getElementById('logoL1')?.value||'').trim();
+  if(l1&&!['LES','THE','GPK','CRADOS'].includes(l1.toUpperCase())&&l1.length>2){
+    const combined=(l1+' '+l2).trim().toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());
+    if(combined.length>3) return combined;
+  }
   if(!clips.length) return 'ce contenu';
   const STOPS=new Set(['video','vid','clip','mp4','mov','avi','mkv','part','scene',
     'draft','final','edit','raw','new','test','les','des','une','pour','avec','dans',
-    'sur','par','est','son','mon','ton','ses']);
+    'sur','par','est','son','mon','ton','ses',
+    'grok','grok_video','kling','runway','midjourney','stable','diffusion',
+    'output','render','viracut','export','temp','file','media','footage']);
   const allWords=clips.map(c=>
-    c.file.name.replace(/\.[^.]+$/,'').replace(/[-_.\s]+/g,' ').toLowerCase()
+    c.file.name.replace(/\.[^.]+$/,'').replace(/[-_.\s\d]+/g,' ').toLowerCase()
   ).join(' ').split(' ').filter(w=>w.length>3&&!STOPS.has(w)&&!/^\d+$/.test(w));
-  // frequency count
   const freq={};
   allWords.forEach(w=>{freq[w]=(freq[w]||0)+1;});
   const sorted=Object.entries(freq).sort((a,b)=>b[1]-a[1]);
-  if(!sorted.length) return 'ce contenu';
-  const top=sorted.slice(0,2).map(([w])=>w);
-  const kw=top.join(' ');
-  return kw.charAt(0).toUpperCase()+kw.slice(1);
+  if(!sorted.length) return 'Les Crados';
+  return sorted[0][0].charAt(0).toUpperCase()+sorted[0][0].slice(1);
 }
 
 /* ── SCORER ── */
@@ -2573,9 +2683,7 @@ function _hmGrade(s){
   if(s>=62)return{g:'C', t:'MOYEN 🛠',     c:'Reformule avec plus de tension ou urgence.'};
   return        {g:'D', t:'À REFAIRE 😬', c:'Trop descriptif — ajoute du choc.'};
 }
-
 function _hmColor(s){return s>=85?'var(--green)':s>=70?'var(--gold)':'var(--red)';}
-
 function _hmHL(text,found){
   let o=text;
   found.forEach(s=>{
@@ -2609,9 +2717,51 @@ function _hmCardsHTML(hooks, idPrefix){
   }).join('');
 }
 
-/* ── GENERATE hooks from clip filenames ── */
+/* ── GENERATE hooks — Vision IA ou fallback local ── */
+async function _hmGenerateAsync(){
+  _hmKw=_hmKwFromClips();
+
+  // Essayer Vision IA si clé Anthropic dispo
+  if(anthropicApiKey && clips.length){
+    try{
+      const visionResult=await _hmVisionAnalyze();
+      if(visionResult && visionResult.hooks && visionResult.hooks.length>=3){
+        _hmVisionDone=true;
+        // Mapper les hooks Claude vers le format interne
+        _hmHooks=visionResult.hooks.slice(0,3).map((h,i)=>{
+          const sc=_hmScore(h.text);
+          // Forcer un score élevé pour les hooks visuels (plus pertinents)
+          sc.score=Math.min(98,sc.score+15);
+          const tmpl=_HM_TMPL.find(t=>t.type===h.type)||_HM_TMPL[i%_HM_TMPL.length];
+          return{text:h.text,type:h.type,emoji:h.emoji||tmpl.emoji,
+                 color:tmpl.color,bg:tmpl.bg,...sc,
+                 visual:true};
+        }).sort((a,b)=>b.score-a.score);
+        // Mettre à jour le mot-clé si la description visuelle est disponible
+        if(visionResult.visual_description){
+          console.log('[HookMaster Vision]',visionResult.visual_description);
+        }
+        return _hmHooks;
+      }
+    }catch(e){console.warn('[HookMaster Vision fallback]',e);}
+  }
+
+  // Fallback local : templates avec mot-clé
+  _hmVisionDone=false;
+  const families=[..._HM_TMPL].sort(()=>Math.random()-.5).slice(0,3);
+  _hmHooks=families.map(fam=>{
+    const fn=fam.fns[Math.floor(Math.random()*fam.fns.length)];
+    const text=fn(_hmKw);
+    const sc=_hmScore(text);
+    return{text,type:fam.type,emoji:fam.emoji,color:fam.color,bg:fam.bg,...sc};
+  }).sort((a,b)=>b.score-a.score);
+  return _hmHooks;
+}
+
+/* ── Wrapper sync pour compatibilité (déclenché après analyzeViralite) ── */
 function _hmGenerate(){
   _hmKw=_hmKwFromClips();
+  // Version sync fallback (sans vision)
   const families=[..._HM_TMPL].sort(()=>Math.random()-.5).slice(0,3);
   _hmHooks=families.map(fam=>{
     const fn=fam.fns[Math.floor(Math.random()*fam.fns.length)];
@@ -2630,15 +2780,12 @@ function _hmRenderVira(){
   const grade=_hmGrade(avg);
   const col=_hmColor(avg);
 
-  // kw chip
   const kc=document.getElementById('hmKwChip');
-  if(kc) kc.textContent=_hmKw;
+  if(kc) kc.textContent=_hmVisionDone?'👁 Vision IA':_hmKw;
 
-  // avg score
   const av=document.getElementById('hmAvg');
   if(av){av.textContent=avg+'/100';av.style.color=col;}
 
-  // global bar
   const gb=document.getElementById('hmGlobal');
   if(gb){
     gb.style.display='flex';
@@ -2654,7 +2801,6 @@ function _hmRenderVira(){
     },100);
   }
 
-  // hook cards
   const list=document.getElementById('hmList');
   if(list){
     list.innerHTML=_hmCardsHTML(hooks,'vira');
@@ -2666,14 +2812,10 @@ function _hmRenderVira(){
     },120);
   }
 
-  // show block
   const blk=document.getElementById('hmBlock');
   if(blk) blk.style.display='block';
 
-  // dot on IA Hook tab
   document.getElementById('td4').classList.add('show');
-
-  // mirror into IA Hook tab
   _hmRenderTab();
 }
 
@@ -2684,12 +2826,15 @@ function _hmRenderTab(){
   const avg=Math.round(_hmHooks.reduce((s,h)=>s+h.score,0)/_hmHooks.length);
   const grade=_hmGrade(avg);
   const col=_hmColor(avg);
+  const sourceLabel=_hmVisionDone
+    ?'<span style="font-size:10px;color:var(--cyan);font-weight:700">👁 Analyse visuelle IA</span>'
+    :`<span style="font-size:10px;color:var(--t3)">${_hmKw}</span>`;
   tc.innerHTML=`
     <div style="background:var(--bg2);border-radius:var(--r);border:1px solid var(--sep);margin-bottom:12px;overflow:hidden;">
       <div style="padding:13px 16px 11px;border-bottom:1px solid var(--sep2);display:flex;align-items:center;justify-content:space-between">
         <div>
-          <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Sujet détecté</div>
-          <div style="font-family:var(--fh);font-size:15px;font-weight:800;color:var(--red)">${_hmKw}</div>
+          <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Source</div>
+          ${sourceLabel}
           <div style="font-size:11px;color:var(--t3);margin-top:2px">${clips.length} clip${clips.length>1?'s':''} analysé${clips.length>1?'s':''}</div>
         </div>
         <div style="text-align:right">
@@ -2698,87 +2843,51 @@ function _hmRenderTab(){
         </div>
       </div>
       <div style="padding:12px 16px 14px;">
-        <div style="height:4px;background:var(--bg4);border-radius:4px;overflow:hidden;margin-bottom:10px">
-          <div style="height:100%;width:${avg}%;background:linear-gradient(90deg,var(--red),var(--blue));border-radius:4px;transition:width 1s"></div>
-        </div>
-        <div style="font-size:12px;color:var(--t2);">${grade.c}</div>
+        <div id="hmTabList">${_hmCardsHTML(_hmHooks,'tab')}</div>
       </div>
     </div>
-    <button class="hm-regen-btn" id="hmRegenBtn" onclick="hmRegen()">🔄 Régénérer les Hooks</button>
-    ${_hmCardsHTML(_hmHooks,'tab')}
-  `;
-  // animate tab fills
+    <button id="hmRegenBtn" class="btn-regen" onclick="hmRegen()">
+      <span>🔄</span><span>Regénérer${anthropicApiKey?' (Vision IA)':' (Local)'}</span>
+    </button>`;
   setTimeout(()=>{
     _hmHooks.forEach((_,i)=>{
       const f=document.getElementById('tabfill'+i);
       if(f) f.style.width=_hmHooks[i].score+'%';
     });
   },120);
-}
-
-/* ── APPLY hook to config ── */
-function hmApply(idx, rawText, prefix){
-  const text=rawText.replace(/<[^>]*>/g,'');
-  const words=text.split(' ');
-  const mid=Math.ceil(words.length/2);
-  const line1=words.slice(0,mid).join(' ');
-  const line2=words.slice(mid).join(' ');
-
-  // Logo fields
-  const l1=document.getElementById('logoL1');
-  const l2=document.getElementById('logoL2');
-  if(l1){l1.value=line1.slice(0,20);l1.dispatchEvent(new Event('input'));}
-  if(l2){l2.value=line2.slice(0,16);l2.dispatchEvent(new Event('input'));}
-
-  // Custom hook text field
-  const cHook=document.getElementById('cHook');
-  if(cHook){cHook.value=text.slice(0,30);cHook.dispatchEvent(new Event('input'));}
-
-  updateChips();
-  updateLogoPreview();
-
-  // Visual feedback — both vira + tab prefixes
-  ['vira','tab'].forEach(p=>{
-    [0,1,2].forEach(i=>{
-      const b=document.getElementById(p+'apply'+i);
-      if(!b) return;
-      if(i===idx){b.textContent='✅ Appliqué';b.classList.add('applied');}
-      else{b.textContent='✓ Appliquer';b.classList.remove('applied');}
-    });
-  });
-
-  // Apply banner in viraBody
-  const body=document.getElementById('viraBody');
-  if(body){
-    const old=body.querySelector('.apply-bar');
-    if(old) old.remove();
-    const banner=document.createElement('div');
-    banner.className='apply-bar';
-    const preview=text.length>42?text.slice(0,42)+'…':text;
-    banner.innerHTML=`<span class="apply-bar-text">🎣 Hook appliqué — "${preview}"</span><button class="btn-apply" onclick="tab(0)">Lancer →</button>`;
-    body.appendChild(banner);
-    document.getElementById('launchBtn').disabled=false;
-    document.getElementById('td0').classList.add('show');
+  // Push button
+  const tc2=document.getElementById('hmTabContent');
+  if(tc2&&!tc2.querySelector('.hm-push-row')&&clips.length){
+    const row=document.createElement('div');
+    row.className='hm-push-row';
+    row.innerHTML=`<button class="btn-push" onclick="pushToGithub()" ${clips.length?'':'disabled'}>
+      <span>🚀</span><span>Pousser + Lancer le rendu</span>
+    </button>`;
+    tc2.appendChild(row);
   }
 }
-window.hmApply=hmApply;
 
-/* ── REGEN from IA Hook tab ── */
-function hmRegen(){
+/* ── REGEN — Vision IA async ── */
+async function hmRegen(){
   const btn=document.getElementById('hmRegenBtn');
-  if(btn){btn.disabled=true;btn.textContent='⏳ Génération…';}
-  setTimeout(()=>{
+  if(btn){btn.disabled=true;btn.textContent=anthropicApiKey?'👁 Analyse visuelle…':'⏳ Génération…';}
+  try{
+    await _hmGenerateAsync();
+    _hmRenderVira();
+    _hmRenderTab();
+  }catch(e){
+    console.warn('[HookMaster Regen]',e);
     _hmGenerate();
     _hmRenderVira();
     _hmRenderTab();
-  },600+Math.random()*400);
+  }
+  if(btn){btn.disabled=false;btn.textContent=anthropicApiKey?'🔄 Regénérer (Vision IA)':'🔄 Regénérer (Local)';}
 }
 window.hmRegen=hmRegen;
 
-/* ── PATCH analyzeViralite — déclenche hooks auto après l'analyse ── */
+/* ── PATCH analyzeViralite — déclenche Vision IA hooks après l'analyse ── */
 const _origAV=analyzeViralite;
 analyzeViralite=async function(){
-  // Reset hook block
   const blk=document.getElementById('hmBlock');
   if(blk) blk.style.display='none';
   const list=document.getElementById('hmList');
@@ -2786,15 +2895,18 @@ analyzeViralite=async function(){
   const gb=document.getElementById('hmGlobal');
   if(gb) gb.style.display='none';
 
-  // Run original analysis
   await _origAV.apply(this,arguments);
 
-  // After analysis settled, generate + render hooks
-  setTimeout(()=>{
+  // Lancer la génération Vision IA en async après analyse
+  setTimeout(async()=>{
     try{
+      await _hmGenerateAsync();
+      _hmRenderVira();
+    }catch(e){
+      console.warn('[HookMaster]',e);
       _hmGenerate();
       _hmRenderVira();
-    }catch(e){console.warn('[HookMaster]',e);}
+    }
   },350);
 };
 window.analyzeViralite=analyzeViralite;
