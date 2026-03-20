@@ -330,12 +330,8 @@ def build_logo_splash(out, opts):
     # Scanlines CRT — geq (1 seul filtre, évite l'overflow filter_complex)
     scanlines = ["geq=lum='if(mod(Y,4),lum(X\\,Y),lum(X\\,Y)*0.78)':cb='cb(X\\,Y)':cr='cr(X\\,Y)'"]
 
-    # Vignette latérale légère uniquement — pas de bandes haut/bas sur le logo
-    vig = int(min(Wi, Hi) * 0.08)
-    vignette_parts = [
-        f"drawbox=x=0:y=0:w={vig}:h={Hi}:color=black@0.30:t=fill",
-        f"drawbox=x={Wi-vig}:y=0:w={vig}:h={Hi}:color=black@0.30:t=fill",
-    ]
+    # Pas de vignette — aucune bande sur le logo
+    vignette_parts = []
 
     # format=yuv420p obligatoire avant fade sur source lavfi (rgb24 sinon)
     vf_parts = (
@@ -593,15 +589,9 @@ def build_cinema_overlay_no_text(opts):
     fade_out_st  = max(0.0, total - fade_out_d)
     fade_in_d    = 0.25
 
-    # Pas de letterbox, pas de vignette haut/bas — format d'origine plein écran
-    # Légère vignette latérale uniquement (côtés gauche/droite, très transparente)
-    vig2 = int(min(Wi, Hi) * 0.08)
-    vig_filter = (
-        f"drawbox=x=0:y=0:w={vig2}:h={Hi}:color=black@0.18:t=fill,"
-        f"drawbox=x={Wi-vig2}:y=0:w={vig2}:h={Hi}:color=black@0.18:t=fill"
-    )
+    # Aucune vignette — pas de bandes semi-transparentes sur les côtés
     fades = f"fade=t=in:st=0:d={fade_in_d},fade=t=out:st={fade_out_st:.2f}:d={fade_out_d}"
-    vf = f"{vig_filter},{fades}"
+    vf = fades
 
     # Pas de fade audio ici — on le fait sur output.mp4 final (après logo)
     run(
