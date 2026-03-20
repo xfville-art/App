@@ -611,9 +611,41 @@ def build_cinema_overlay_no_text(opts):
     fade_out_st  = max(0.0, total - fade_out_d)
     fade_in_d    = 0.25
 
+    # ── Watermark @lescrados.ai ───────────────────────────────────────
+    # Visible tout le long du contenu, disparaît 0.4s avant la fin (avant logo)
+    wm_txt       = "@lescrados.ai"
+    wm_sz        = max(20, int(Hi * 0.030))      # ~3% hauteur
+    wm_margin_x  = int(Wi * 0.035)               # 3.5% depuis le bord gauche
+    wm_margin_y  = int(Hi * 0.030)               # 3% depuis le bas
+    wm_y         = Hi - wm_margin_y - wm_sz
+    wm_fade_in   = 0.35                           # fondu d'entrée
+    wm_fade_out  = max(0.0, total - 0.4)          # disparaît 0.4s avant le logo
+
+    wm_alpha = (
+        f"if(lt(t,{wm_fade_in}),t/{wm_fade_in},"
+        f"if(gt(t,{wm_fade_out:.3f}),(t-{wm_fade_out:.3f})/0.4,1))"
+    )
+    # Écrire le handle dans un fichier texte (évite tout problème d'échappement)
+    with open("_wm_handle.txt", "w", encoding="utf-8") as _f:
+        _f.write(wm_txt)
+
+    # Ombre portée (décalée de 2px) + texte principal
+    wm_shadow = (
+        f"drawtext=fontfile={FONT}:textfile=_wm_handle.txt:"
+        f"fontsize={wm_sz}:fontcolor=black@0.55:"
+        f"x={wm_margin_x + 2}:y={wm_y + 2}:"
+        f"alpha='{wm_alpha}'"
+    )
+    wm_main = (
+        f"drawtext=fontfile={FONT}:textfile=_wm_handle.txt:"
+        f"fontsize={wm_sz}:fontcolor=white@0.88:"
+        f"x={wm_margin_x}:y={wm_y}:"
+        f"alpha='{wm_alpha}'"
+    )
+
     # Aucune vignette — pas de bandes semi-transparentes sur les côtés
     fades = f"fade=t=in:st=0:d={fade_in_d},fade=t=out:st={fade_out_st:.2f}:d={fade_out_d}"
-    vf = fades
+    vf = f"{wm_shadow},{wm_main},{fades}"
 
     # Pas de fade audio ici — on le fait sur output.mp4 final (après logo)
     run(
