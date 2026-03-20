@@ -698,6 +698,18 @@ def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts, role="core"):
             vf = f"{vf},{lut_filter}"
             print(f"      [LUT] thème={theme_id}")
 
+    # ── Masque watermark source AI (coin haut-droit) ────────────────
+    # Kling / Runway / Hailuo placent leur logo en haut à droite.
+    # Un drawbox noir semi-transparent le couvre proprement.
+    wm_box_w = int(W_i * 0.12)   # 12% largeur
+    wm_box_h = int(H_i * 0.07)   # 7% hauteur
+    wm_box_x = W_i - wm_box_w    # coin droit
+    ai_wm_cover = (
+        f"drawbox=x={wm_box_x}:y=0:w={wm_box_w}:h={wm_box_h}:"
+        f"color=black@0.92:t=fill"
+    )
+    vf = f"{vf},{ai_wm_cover}"
+
     # ── Extraction ────────────────────────────────────────────────────
     ss_flag = f"-ss {in_pt:.3f}" if in_pt > 0.001 else ""
 
@@ -848,10 +860,10 @@ def build_cinema_overlay_no_text(opts):
         import random, time
         # Numéro pseudo-aléatoire mais stable (basé sur timestamp du run)
         serial = opts.get("serial_override", random.randint(1, 999))
-        serial_txt = f"N°{serial:03d} / ∞"
-        sr_sz  = max(16, int(Hi * 0.022))    # ~2.2% hauteur — discret
-        sr_x   = int(Wi * 0.035)             # coin bas gauche, sous le watermark
-        sr_y   = wm_y - sr_sz - int(Hi * 0.012)
+        serial_txt = f"N{serial:03d} / inf"
+        sr_sz  = max(16, int(Hi * 0.020))    # ~2.0% hauteur — discret
+        sr_x   = int(Wi * 0.035)             # coin bas gauche
+        sr_y   = wm_y - sr_sz - int(Hi * 0.018)  # espacement suffisant sous wm
         sr_fade_in  = 0.5
         sr_fade_out = max(0.0, total - 0.4)
         sr_alpha = (
