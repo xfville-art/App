@@ -58,7 +58,7 @@ jobs:
 
           api = KaggleApi()
           api.authenticate()
-          print(f"✓ Auth Kaggle OK (kaggle {__import__('kaggle').__version__})")
+          print("✓ Auth Kaggle OK (kaggle 1.5.16)")
 
           KG_USER      = os.environ['KAGGLE_USERNAME']
           KERNEL_SLUG  = os.environ.get('KAGGLE_KERNEL_SLUG', 'viravid-i2v')
