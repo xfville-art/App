@@ -776,15 +776,20 @@ def build_cinema_overlay_no_text(opts):
     # ── Vignette pulsée (hook uniquement = premières secondes) ───────
     if cfg(opts, "vignette_pulse"):
         vs = cfg(opts, "vignette_strength")   # 0.55
-        # pulse sin(t*6) — 1 battement ~1s, appliquée sur toute la durée
-        # geq en yuv : assombrit les coins avec un masque radial pulsé
-        pulse_end = min(total, 4.0)   # vignette active sur les 4 premières secondes
+        pulse_end = min(total, 4.0)
+        # FFmpeg geq n'accepte pas if() imbriqué dans lum= avec plusieurs args.
+        # Solution : vignette radiale simple via geq, active seulement sur pulse_end
+        # avec enable= (géré nativement par FFmpeg sans expression conditionnelle).
+        # Expression geq simplifiée : masque radial + sin(t) sans if() inline.
+        # r = distance normalisée au centre [0,1]
+        # lum *= 1 - strength * max(0, r*2-1) * (0.7+0.3*sin(t*6.28))
         vign = (
             f"geq="
-            f"lum='lum(X,Y)*max(0,1-{vs:.2f}*max(0,1-2*sqrt((X/W-0.5)*(X/W-0.5)+(Y/H-0.5)*(Y/H-0.5)))"
-            f"*(0.7+0.3*sin(t*6.28)))"
-            f"*if(lte(t,{pulse_end:.2f}),1,0)+lum(X,Y)*if(gt(t,{pulse_end:.2f}),1,0)':"
-            f"cb='cb(X,Y)':cr='cr(X,Y)'"
+            f"lum='lum(X\\,Y)*(1-{vs:.2f}"
+            f"*max(0\\,2*sqrt((X/W-0.5)*(X/W-0.5)+(Y/H-0.5)*(Y/H-0.5))-1)"
+            f"*(0.7+0.3*sin(t*6.28)))':"
+            f"cb='cb(X\\,Y)':cr='cr(X\\,Y)'"
+            f":enable='lte(t\\,{pulse_end:.2f})'"
         )
         vf_parts.append(vign)
         print(f"  [Vignette] Pulse sin(t*6) sur {pulse_end:.1f}s  strength={vs}")
