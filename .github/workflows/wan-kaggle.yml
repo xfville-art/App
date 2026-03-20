@@ -59,11 +59,8 @@ jobs:
           FAL_H = {'Authorization': f'Key {FAL_KEY}', 'Content-Type': 'application/json'}
           GH_H  = {'Authorization': f'token {GH_TOKEN}', 'Accept': 'application/vnd.github.v3+json'}
 
-          # fal.ai accepte directement une data URI base64 comme image_url
-          # Pas besoin d'upload séparé — l'API décode automatiquement
           IMAGE_DATA_URI = f'data:image/jpeg;base64,{IMG_B64}'
 
-          # ── Soumettre le job en queue ────────────────────────────────────
           print('🚀 Soumission job fal-ai/wan-i2v...')
           sub = requests.post(
               'https://queue.fal.run/fal-ai/wan-i2v',
@@ -87,7 +84,6 @@ jobs:
           body = sub.json()
           print(json.dumps(body, indent=2)[:300])
 
-          # Réponse sync directe (pas de queue)
           if 'video' in body:
               video_url = body['video']['url']
               print(f'✓ Vidéo (sync): {video_url}')
@@ -98,8 +94,7 @@ jobs:
 
               print(f'✓ request_id: {req_id}')
 
-              # ── Poll statut ──────────────────────────────────────────────
-              video_url    = None
+              video_url = None
               max_wait, interval, elapsed = 900, 10, 0
 
               while elapsed < max_wait:
@@ -126,7 +121,6 @@ jobs:
                       print(json.dumps(result, indent=2)[:300])
                       video_url = (result.get('video') or {}).get('url')
                       if not video_url:
-                          # Parfois dans 'outputs'
                           video_url = (result.get('outputs') or [{}])[0].get('url')
                       break
                   elif status in ('FAILED', 'ERROR'):
@@ -140,7 +134,6 @@ jobs:
 
           print(f'✓ Vidéo: {video_url}')
 
-          # ── Télécharger le MP4 ───────────────────────────────────────────
           print('📥 Téléchargement MP4...')
           vr = requests.get(video_url, timeout=120, stream=True)
           vr.raise_for_status()
@@ -151,7 +144,6 @@ jobs:
           size_mb = os.path.getsize(out) / 1048576
           print(f'✓ {size_mb:.1f} MB')
 
-          # ── GitHub Release ────────────────────────────────────────────────
           TAG = f'viravid-{RUN_ID}'
           print(f'📦 Release {TAG}...')
           rel = requests.post(
