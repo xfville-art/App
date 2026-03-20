@@ -1092,13 +1092,17 @@ def start():
 
         map_v = f"-map 0:{h264_idx}" if h264_idx is not None else "-map 0:v:0"
 
-        # ── Scale 9:16 plein écran — zoom 18% + crop centré ─────────
-        # Zoom 18% sur la source puis crop centré 720x1280.
-        # Coupe ~65px de chaque côté → élimine tous les bords de carte
-        # (fond gris, fond bokeh, marges blanches) quelle que soit la source.
-        # Simple, robuste, zéro dépendance externe.
+        # ── Scale 9:16 plein écran — fill + zoom 18% + crop centré ─
+        # 1. scale=W*1.18:H*1.18 force:increase → remplit AU MOINS la cible*1.18
+        #    quelle que soit la résolution source (480p, 720p, 1080p…)
+        # 2. crop=W:H centré → coupe ~65px de chaque côté, élimine tous les bords
+        #    (fond gris, bokeh, marges blanches de carte)
+        OW = int(W) * 118 // 100
+        OH = int(H) * 118 // 100
+        OW += OW % 2   # forcer pair
+        OH += OH % 2
         vf_scale = (
-            f"scale=iw*1.18:ih*1.18:flags=lanczos,"
+            f"scale={OW}:{OH}:force_original_aspect_ratio=increase:flags=lanczos,"
             f"crop={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
             f"setsar=1,fps={fps}"
         )
