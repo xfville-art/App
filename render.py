@@ -1121,13 +1121,15 @@ def hook_text_generation(raw_paths, opts):
         except Exception as e:
             print(f"  [HookText] Claude erreur — fallback Groq : {e}")
 
-    # ══ Tentative 2 : Groq Vision (llama-4-scout) ════════════════
-    groq_key = os.environ.get("GROQ_API_KEY", "")
-    if groq_key:
-        print("  [HookText] Tentative Groq Vision (llama-4-scout)…")
+    # ══ Tentative 2 : OpenRouter Vision (llama-4-scout) ═════════════
+    # Groq bloque les IPs GitHub Actions (Cloudflare 403).
+    # OpenRouter accepte les runners et supporte llama-4-scout en vision.
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY", "")
+    if openrouter_key:
+        print("  [HookText] Tentative OpenRouter Vision (llama-4-scout)…")
         try:
             payload = json.dumps({
-                "model":       "meta-llama/llama-4-scout-17b-16e-instruct",
+                "model":       "meta-llama/llama-4-scout",
                 "max_tokens":  60,
                 "temperature": 0.4,
                 "messages": [{
@@ -1141,11 +1143,13 @@ def hook_text_generation(raw_paths, opts):
                 }]
             }).encode()
             req = urllib.request.Request(
-                "https://api.groq.com/openai/v1/chat/completions",
+                "https://openrouter.ai/api/v1/chat/completions",
                 data    = payload,
                 headers = {
                     "Content-Type":  "application/json",
-                    "Authorization": f"Bearer {groq_key}",
+                    "Authorization": f"Bearer {openrouter_key}",
+                    "HTTP-Referer":  "https://github.com/xfville-art/App",
+                    "X-Title":       "ViraCut Studio",
                 },
                 method = "POST"
             )
@@ -1154,13 +1158,13 @@ def hook_text_generation(raw_paths, opts):
             hook_text = _clean_hook(body["choices"][0]["message"]["content"])
             if hook_text:
                 opts["custom_hook"] = hook_text
-                print(f"  [HookText] ✅ Groq Vision : \"{hook_text}\"")
+                print(f"  [HookText] ✅ OpenRouter Vision : \"{hook_text}\"")
                 return
         except urllib.error.HTTPError as e:
             err_body = e.read().decode()[:300]
-            print(f"  [HookText] Groq HTTP {e.code} : {err_body[:120]}")
+            print(f"  [HookText] OpenRouter HTTP {e.code} : {err_body[:120]}")
         except Exception as e:
-            print(f"  [HookText] Groq erreur : {e}")
+            print(f"  [HookText] OpenRouter erreur : {e}")
 
     print("  [HookText] Tous les providers ont échoué — pas de hook textuel")
 
