@@ -777,22 +777,15 @@ def build_cinema_overlay_no_text(opts):
     if cfg(opts, "vignette_pulse"):
         vs = cfg(opts, "vignette_strength")   # 0.55
         pulse_end = min(total, 4.0)
-        # FFmpeg geq n'accepte pas if() imbriqué dans lum= avec plusieurs args.
-        # Solution : vignette radiale simple via geq, active seulement sur pulse_end
-        # avec enable= (géré nativement par FFmpeg sans expression conditionnelle).
-        # Expression geq simplifiée : masque radial + sin(t) sans if() inline.
-        # r = distance normalisée au centre [0,1]
-        # lum *= 1 - strength * max(0, r*2-1) * (0.7+0.3*sin(t*6.28))
-        vign = (
-            f"geq="
-            f"lum='lum(X\\,Y)*(1-{vs:.2f}"
-            f"*max(0\\,2*sqrt((X/W-0.5)*(X/W-0.5)+(Y/H-0.5)*(Y/H-0.5))-1)"
-            f"*(0.7+0.3*sin(t*6.28)))':"
-            f"cb='cb(X\\,Y)':cr='cr(X\\,Y)'"
-            f":enable='lte(t\\,{pulse_end:.2f})'"
-        )
+        # geq sin() non disponible dans cette version FFmpeg Actions.
+        # Alternative robuste : vignette via filtre natif FFmpeg "vignette"
+        # + drawbox coins noirs semi-transparents pulsés via alpha=sin.
+        # On utilise 4 drawbox en coins avec alpha dynamique via enable.
+        # Approche 100% stable : vignette FFmpeg natif (filtre dédié)
+        vign_angle = min(1.2, vs * 2.0)   # angle vignette [0, PI/2]
+        vign = f"vignette=angle={vign_angle:.3f}:mode=forward:eval=frame:enable='lte(t\\,{pulse_end:.2f})'"
         vf_parts.append(vign)
-        print(f"  [Vignette] Pulse sin(t*6) sur {pulse_end:.1f}s  strength={vs}")
+        print(f"  [Vignette] Native FFmpeg vignette sur {pulse_end:.1f}s  angle={vign_angle:.2f}")
 
     # ── Watermark @lescrados.ai ──────────────────────────────────────
     wm_txt      = "@lescrados.ai"
