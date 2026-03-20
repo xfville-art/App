@@ -1092,20 +1092,138 @@ def start():
 
         map_v = f"-map 0:{h264_idx}" if h264_idx is not None else "-map 0:v:0"
 
-        # ── Scale 9:16 plein écran — fill + zoom 18% + crop centré ─
-        # 1. scale=W*1.18:H*1.18 force:increase → remplit AU MOINS la cible*1.18
-        #    quelle que soit la résolution source (480p, 720p, 1080p…)
-        # 2. crop=W:H centré → coupe ~65px de chaque côté, élimine tous les bords
-        #    (fond gris, bokeh, marges blanches de carte)
-        OW = int(W) * 118 // 100
-        OH = int(H) * 118 // 100
-        OW += OW % 2   # forcer pair
-        OH += OH % 2
-        vf_scale = (
-            f"scale={OW}:{OH}:force_original_aspect_ratio=increase:flags=lanczos,"
-            f"crop={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
-            f"setsar=1,fps={fps}"
-        )
+        # ── Crop contenu + scale 9:16 plein écran sans bandes ───────
+        # Détecte les bords de la carte via gradient inter-colonnes/lignes
+        # (fonctionne sur fond gris, bokeh, blanc — 100% FFmpeg rawvideo).
+        # Puis crop sur le contenu réel + scale W:H en conservant le ratio
+        # (scale sur la largeur, crop vertical centré).
+        def detect_content_borders(path):
+            """
+            Retourne (left, right, top, bottom) = pixels à couper de chaque bord.
+            Utilise le gradient inter-colonnes/lignes pour trouver la frontière
+            fond→contenu, quelle que soit la couleur du fond.
+            """
+            try:
+                src_info = ffprobe(path)
+                src_vs = [s for s in src_info.get("streams", [])
+                          if s.get("codec_type") == "video"]
+                if not src_vs:
+                    return 0, 0, 0, 0
+                VW = int(src_vs[0].get("width",  720))
+                VH = int(src_vs[0].get("height", 1280))
+                mid = max(duration(path) / 2, 0.5)
+
+                r2 = subprocess.run(
+                    f'ffmpeg -ss {mid:.2f} -i "{path}" -vframes 1 '
+                    f'-f rawvideo -pix_fmt rgb24 -vcodec rawvideo pipe:1 2>/dev/null',
+                    shell=True, capture_output=True
+                )
+                raw = r2.stdout
+                if len(raw) != VW * VH * 3:
+                    return 0, 0, 0, 0
+
+                SAMPLE = 4  # échantillonnage 1 ligne/colonne sur 4
+
+                def col_grad(x):
+                    """Gradient moyen entre colonne x et x+1."""
+                    if x + 1 >= VW:
+                        return 0.0
+                    s = 0; n = 0
+                    for y in range(0, VH, SAMPLE):
+                        base_a = (y * VW + x) * 3
+                        base_b = (y * VW + x + 1) * 3
+                        s += (abs(raw[base_b]   - raw[base_a])
+                            + abs(raw[base_b+1] - raw[base_a+1])
+                            + abs(raw[base_b+2] - raw[base_a+2]))
+                        n += 1
+                    return s / n / 3
+
+                def row_grad(y):
+                    """Gradient moyen entre ligne y et y+1."""
+                    if y + 1 >= VH:
+                        return 0.0
+                    s = 0; n = 0
+                    for x in range(0, VW, SAMPLE):
+                        base_a = (y       * VW + x) * 3
+                        base_b = ((y + 1) * VW + x) * 3
+                        s += (abs(raw[base_b]   - raw[base_a])
+                            + abs(raw[base_b+1] - raw[base_a+1])
+                            + abs(raw[base_b+2] - raw[base_a+2]))
+                        n += 1
+                    return s / n / 3
+
+                GRAD_THR = 8.0   # seuil gradient pour détecter frontière fond→contenu
+                MARGIN   = 2     # pixels de sécurité
+
+                # Gauche : première rupture forte en partant de x=0
+                left = 0
+                for x in range(0, min(120, VW - 1)):
+                    if col_grad(x) > GRAD_THR:
+                        left = max(0, x - MARGIN)
+                        break
+
+                # Droite : première rupture forte en partant de x=VW-1
+                right = 0
+                for x in range(VW - 2, max(VW - 120, 0), -1):
+                    if col_grad(x) > GRAD_THR:
+                        right = max(0, VW - 2 - x - MARGIN)
+                        break
+
+                # Haut
+                top = 0
+                for y in range(0, min(120, VH - 1)):
+                    if row_grad(y) > GRAD_THR:
+                        top = max(0, y - MARGIN)
+                        break
+
+                # Bas
+                bottom = 0
+                for y in range(VH - 2, max(VH - 120, 0), -1):
+                    if row_grad(y) > GRAD_THR:
+                        bottom = max(0, VH - 2 - y - MARGIN)
+                        break
+
+                return left, right, top, bottom
+            except Exception as _e:
+                print(f"      detect_content_borders: {_e}")
+                return 0, 0, 0, 0
+
+        bl, br, bt, bb = detect_content_borders(raw)
+        print(f"  Clip {i} : bords détectés L={bl} R={br} T={bt} B={bb}")
+
+        src_info = ffprobe(raw)
+        src_vs = [s for s in src_info.get("streams", []) if s.get("codec_type") == "video"]
+        src_w = int(src_vs[0].get("width",  int(W))) if src_vs else int(W)
+        src_h = int(src_vs[0].get("height", int(H))) if src_vs else int(H)
+
+        if bl + br + bt + bb > 4:
+            # Contenu réel après crop
+            cw = src_w - bl - br
+            ch = src_h - bt - bb
+            cw -= cw % 2
+            ch -= ch % 2
+            cx, cy = bl, bt
+
+            # Scale sur la largeur → W (conserve ratio horizontal),
+            # hauteur peut dépasser H → crop vertical centré
+            scale_h = int(ch * int(W) / cw)
+            scale_h += scale_h % 2
+            crop_y  = max(0, (scale_h - int(H)) // 2)
+
+            vf_scale = (
+                f"crop={cw}:{ch}:{cx}:{cy},"
+                f"scale={W}:{scale_h}:flags=lanczos,"
+                f"crop={W}:{H}:0:{crop_y},"
+                f"setsar=1,fps={fps}"
+            )
+            print(f"      vf: crop {cw}x{ch}+{cx}+{cy} → scale {W}x{scale_h} → crop {W}x{H}+0+{crop_y}")
+        else:
+            # Pas de bords détectés : scale direct fill
+            vf_scale = (
+                f"scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
+                f"setsar=1,fps={fps}"
+            )
 
         if audio_streams:
             run(
