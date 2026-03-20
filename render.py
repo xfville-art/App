@@ -1,12 +1,11 @@
 """
-render.py — ViraCut Studio v14  ★ LesCrados.Ai Edition ★
+render.py — ViraCut Studio v13  ★ LesCrados.Ai Edition ★
 ═════════════════════════════════════════════════════════
-v14 : AUTO-DETECT JSON + CLIP MISSING GUARD
-     — Cherche automatiquement le dernier .json modifié dans le dossier
-     — Priorité : p.json > dernier *.json modifié > erreur claire
-     — Validation : vérifie chaque clip avant décodage, message d'erreur précis
-v13 : HOOK MASTER intégré · Auto-crop fill · Logo cap L1/L2
 v12 : SMART CUT ENGINE
+     — motion_start : détection du 1er frame d'action réelle (skip intro statique)
+     — punchline_seek : repérage du pic d'action dans le dernier clip
+     — zoom progressif adaptatif : push-in hook + explosion zoom punch
+     — grade BD renforcé : saturation/contraste Crados
 v11 : CONCAT CUT ENGINE + Stickers IA BD style (v2)
 v10 : VIRALITÉ ANALYSIS ENGINE
 v9  : DIALOGUE CUT ENGINE
@@ -1043,109 +1042,31 @@ def apply_subtitles(input_video, output_video, subtitles, opts):
 # ═══════════════════════════════════════════════════════════════════════
 # ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════════
-
-def _find_payload_json():
-    """
-    Cherche le fichier payload JSON à utiliser, dans l'ordre de priorité :
-      1. p.json   — fichier standard ViraCut (push par l'app)
-      2. dernier *.json modifié dans le répertoire courant
-         (utile pour déclencher manuellement ou via workflow sur un autre fichier)
-    Retourne le chemin du fichier trouvé, ou lève SystemExit si aucun.
-    """
-    # Priorité 1 : p.json standard
-    if os.path.exists("p.json"):
-        print("  Payload : p.json (standard)")
-        return "p.json"
-
-    # Priorité 2 : dernier *.json modifié (exclut package*.json, *.lock.json)
-    candidates = [
-        f for f in os.listdir(".")
-        if f.endswith(".json")
-        and not f.startswith("package")
-        and "lock" not in f
-        and os.path.isfile(f)
-    ]
-    if candidates:
-        latest = max(candidates, key=lambda f: os.path.getmtime(f))
-        print(f"  Payload : {latest} (dernier JSON modifié — p.json absent)")
-        return latest
-
-    print("ERREUR : aucun fichier payload JSON trouvé (ni p.json ni *.json)")
-    print("  → Vérifier que l'app a bien poussé p.json sur le dépôt.")
-    sys.exit(1)
-
-
-def _validate_clips(clips_raw):
-    """
-    Vérifie que chaque clip possède un champ 'data' non-vide et décodable.
-    Affiche un message d'erreur précis pour chaque clip invalide.
-    Retourne True si tous les clips sont valides, False sinon.
-    """
-    all_ok = True
-    for i, v in enumerate(clips_raw):
-        name = v.get("name", f"clip_{i+1}")
-        data = v.get("data", "")
-
-        if not data:
-            print(f"  ✗ Clip {i+1} '{name}' : champ 'data' vide ou absent")
-            all_ok = False
-            continue
-
-        # Vérifier que le base64 est bien décodable
-        try:
-            decoded = base64.b64decode(data)
-            if len(decoded) < 1024:   # < 1 Ko = probablement pas une vraie vidéo
-                print(f"  ✗ Clip {i+1} '{name}' : données trop courtes ({len(decoded)} octets) — clip corrompu ou manquant")
-                all_ok = False
-            else:
-                print(f"  ✓ Clip {i+1} '{name}' : {len(decoded)/1_048_576:.1f} MB — OK")
-        except Exception as e:
-            print(f"  ✗ Clip {i+1} '{name}' : décodage base64 impossible — {e}")
-            all_ok = False
-
-    return all_ok
-
-
 def start():
-    # ── Trouver le payload JSON ────────────────────────────────────────
-    payload_path = _find_payload_json()
+    if not os.path.exists("p.json"):
+        print("ERREUR : p.json introuvable")
+        sys.exit(1)
 
-    try:
-        with open(payload_path, encoding="utf-8") as f:
-            data = json.load(f)
-    except json.JSONDecodeError as e:
-        print(f"ERREUR : {payload_path} n'est pas un JSON valide — {e}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"ERREUR lecture {payload_path} : {e}")
-        sys.exit(1)
+    with open("p.json") as f:
+        data = json.load(f)
 
     clips_raw = data.get("videos", [])
     opts      = data.get("options", {})
 
     if not clips_raw:
-        print(f"ERREUR : aucun clip dans {payload_path} (champ 'videos' vide ou absent)")
+        print("ERREUR : aucun clip dans p.json")
         sys.exit(1)
 
     print("=" * 60)
-    print("  ViraCut v14 -- LesCrados.Ai  [AUTO ENGINE]")
+    print("  ViraCut v13 -- LesCrados.Ai  [LOGO CUSTOM ENGINE]")
     print("=" * 60)
-    print(f"  Payload            : {payload_path}")
-    print(f"  Clips reçus        : {len(clips_raw)}")
+    print(f"  Clips recus        : {len(clips_raw)}")
     print(f"  Smart Cut          : {cfg(opts,'smart_cut')}")
     print(f"  Scene threshold    : {cfg(opts,'scene_thr')}")
     print(f"  Static skip max    : {cfg(opts,'static_max_skip')}s")
     print(f"  Hook zoom          : {cfg(opts,'hook_zoom')} (×{cfg(opts,'zoom_hook_scale')})")
     print(f"  Punch zoom         : {cfg(opts,'punch_zoom')} (×{cfg(opts,'zoom_punch_scale')})")
     print(f"  Grade              : sat={cfg(opts,'grade_saturation')} cont={cfg(opts,'grade_contrast')}")
-
-    # ── Validation des clips avant décodage ───────────────────────────
-    print("\n  [Validation clips]")
-    if not _validate_clips(clips_raw):
-        print("\nERREUR : un ou plusieurs clips sont invalides ou manquants.")
-        print("  → Vérifier que tous les fichiers vidéo ont bien été uploadés par l'app.")
-        sys.exit(1)
-    print(f"  Tous les clips ({len(clips_raw)}) sont valides ✅\n")
 
     # Decodage + sanitisation des clips sources
     # Force un re-encode propre pour éliminer les artefacts GOP des clips AI
@@ -1180,84 +1101,49 @@ def start():
         map_v = f"-map 0:{h264_idx}" if h264_idx is not None else "-map 0:v:0"
 
         # ── Auto-crop + scale-fill 9:16 ──────────────────────────────
-        # ── Auto-crop + scale-fill 9:16 ──────────────────────────────
-        # Supprime les bandes noires/grises/blanches des clips sources
-        # (bordures de cartes collectibles AI, pillarbox, letterbox).
-        # Stratégie robuste :
-        #   1. cropdetect sur le milieu du clip (évite intro/outro)
-        #   2. Vote majoritaire sur toutes les valeurs stables
-        #   3. Validation stricte : retirer si > 1% dans au moins 1 dimension
-        #   4. Scale-fill : surscale → crop centré → plein écran garanti
+        # 1. Détecte les bandes noires/blanches source via cropdetect
+        # 2. Crop pour les retirer
+        # 3. Scale-fill : surscale puis crop centré → plein écran sans bandes
         def get_crop(path, map_flag):
-            """Retourne 'w:h:x:y' ou None si aucune bande détectable."""
+            """Retourne 'w:h:x:y' ou None si pas de bandes détectées."""
             try:
-                src_dur = duration(path)
-                # Analyser depuis 15% jusqu'à 75% de la durée
-                ss = max(0.3, src_dur * 0.15)
-                t  = min(8.0, src_dur * 0.60)
-
                 r2 = subprocess.run(
-                    f'ffmpeg -ss {ss:.2f} -t {t:.2f} -i "{path}" {map_flag} '
-                    f'-vf "cropdetect=limit=16:round=2:reset=1" -f null - 2>&1',
+                    f'ffmpeg -ss 0.5 -t 3 -i "{path}" {map_flag} '
+                    f'-vf "cropdetect=limit=24:round=2:reset=0" -f null - 2>&1',
                     shell=True, capture_output=True, text=True
                 )
-                lines = (r2.stdout + r2.stderr).splitlines()
-
+                out = r2.stdout + r2.stderr
                 crops = []
-                for line in lines:
-                    if "crop=" not in line or "Parsed_cropdetect" not in line:
-                        continue
-                    c = line.split("crop=")[-1].strip().split()[0]
-                    parts = c.split(":")
-                    if len(parts) != 4:
-                        continue
-                    try:
-                        cw2, ch2, cx2, cy2 = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
-                    except (ValueError, TypeError):
-                        continue
-                    if cw2 > 0 and ch2 > 0:
-                        crops.append((cw2, ch2, cx2, cy2))
-
-                if len(crops) < 4:
+                for line in out.splitlines():
+                    if "crop=" in line and "Parsed_cropdetect" in line:
+                        c = line.split("crop=")[-1].strip().split()[0]
+                        crops.append(c)
+                if not crops:
                     return None
-
-                # Vote majoritaire
-                from collections import Counter
-                vote   = Counter(crops)
-                best_t, count = vote.most_common(1)[0]
-                if count < max(3, len(crops) // 8):
-                    return None
-
-                cw, ch, cx, cy = best_t
-
-                # Dimensions source
-                sp = ffprobe(path)
-                vs = [s for s in sp.get("streams", []) if s.get("codec_type") == "video"]
+                # Prendre le crop le plus fréquent (dernière valeur stabilisée)
+                cw, ch, cx, cy = map(int, crops[-1].split(":"))
+                src_probe = ffprobe(path)
+                vs = [s for s in src_probe.get("streams", [])
+                      if s.get("codec_type") == "video"]
                 if not vs:
                     return None
-                sw = int(vs[0].get("width",  cw))
+                sw = int(vs[0].get("width", cw))
                 sh = int(vs[0].get("height", ch))
-
-                removed_w = sw - cw   # pixels retirés en largeur
-                removed_h = sh - ch   # pixels retirés en hauteur
-
-                # Appliquer dès qu'une bande > 1% est détectée (OR, pas AND)
-                if removed_w < sw * 0.01 and removed_h < sh * 0.01:
+                # Ignorer si le crop est quasi-identique à la source (< 2% de marge)
+                if abs(cw - sw) < sw * 0.02 and abs(ch - sh) < sh * 0.02:
                     return None
-
-                print(f"  Clip {i} : autocrop → {cw}:{ch}:{cx}:{cy} "
-                      f"(−{removed_w}px largeur, −{removed_h}px hauteur, "
-                      f"vote {count}/{len(crops)})")
                 return f"{cw}:{ch}:{cx}:{cy}"
-
-            except Exception as e:
-                print(f"  Clip {i} : autocrop erreur ({e}) — scale direct")
+            except Exception:
                 return None
 
-        crop_param  = get_crop(raw, map_v)
-        crop_filter = f"crop={crop_param}," if crop_param else ""
+        crop_param = get_crop(raw, map_v)
+        if crop_param:
+            print(f"  Clip {i} : autocrop détecté → crop={crop_param}")
+            crop_filter = f"crop={crop_param},"
+        else:
+            crop_filter = ""
 
-        # scale=increase puis crop centré → plein écran 9:16, zéro bande résiduelle
+        # scale=increase puis crop centré → plein écran 9:16, zéro bande
         vf_scale = (
             f"{crop_filter}"
             f"scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,"
