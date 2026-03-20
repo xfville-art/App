@@ -323,13 +323,10 @@ def build_logo_splash(out, opts):
             f"alpha='if(lt(t,0.7),0,if(lt(t,1.0),(t-0.7)/0.3,1))':enable='gte(t,0.7)'"
         )
 
-    # Scanlines CRT
-    scanlines = [
-        "drawbox=x=0:y=" + str(_sy) + ":w=" + str(Wi) + ":h=1:color=black@0.22:t=fill"
-        for _sy in range(0, Hi, 4)
-    ]
+    # Scanlines CRT — geq (1 seul filtre, évite l'overflow filter_complex)
+    scanlines = ["geq=lum='if(mod(Y,4),lum(X\\,Y),lum(X\\,Y)*0.78)':cb='cb(X\\,Y)':cr='cr(X\\,Y)'"]
 
-    # Vignette simulée par drawbox (vignette= filter absent sur runners GitHub)
+    # Vignette simulée par drawbox (vignette= absent sur runners GitHub)
     vig = int(min(Wi, Hi) * 0.18)
     vignette_parts = [
         f"drawbox=x=0:y=0:w={Wi}:h={vig}:color=black@0.55:t=fill",
