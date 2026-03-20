@@ -234,11 +234,15 @@ def build_logo_splash(out, opts):
     dur  = 2.5
 
     # ── Paramètres logo depuis opts (App-11) ──────────────────────────
+    def _esc(t):
+        """Échappe les apostrophes pour FFmpeg drawtext (text='...')."""
+        return t.replace("'", "\u2019")   # remplace ' par ' (apostrophe typographique)
+
     logo_cfg = opts.get("logo", {})
-    l1_txt   = str(logo_cfg.get("l1", "LES")).strip().upper()     or "LES"
-    l2_txt   = str(logo_cfg.get("l2", "CRADOS")).strip().upper()  or "CRADOS"
-    l3_txt   = str(logo_cfg.get("l3", ".Ai")).strip()             or ".Ai"
-    slogan   = str(logo_cfg.get("slogan", "")).strip()
+    l1_txt   = _esc(str(logo_cfg.get("l1", "LES")).strip().upper())     or "LES"
+    l2_txt   = _esc(str(logo_cfg.get("l2", "CRADOS")).strip().upper())  or "CRADOS"
+    l3_txt   = _esc(str(logo_cfg.get("l3", ".Ai")).strip())             or ".Ai"
+    slogan   = _esc(str(logo_cfg.get("slogan", "")).strip())
     theme_id = str(logo_cfg.get("theme", "crados")).lower()
 
     # Thèmes : (halo_r, halo_g, halo_b, accent_hex)
