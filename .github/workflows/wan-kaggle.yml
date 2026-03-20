@@ -34,10 +34,13 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install deps
-        run: pip install kaggle requests
+      - name: Install Kaggle 1.5.16 (avant migration gRPC)
+        # Les versions >= 1.6.0 ont migré kernels_push vers gRPC SaveKernel
+        # qui retourne 401 avec les tokens API depuis l'extérieur.
+        # 1.5.16 utilise encore l'ancienne API REST /kernels/push qui fonctionne.
+        run: pip install "kaggle==1.5.16" requests
 
-      - name: Update & run kernel existant
+      - name: Push & run kernel
         env:
           KAGGLE_USERNAME:    ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY:         ${{ secrets.KAGGLE_KEY }}
@@ -55,7 +58,7 @@ jobs:
 
           api = KaggleApi()
           api.authenticate()
-          print("✓ Auth Kaggle OK")
+          print(f"✓ Auth Kaggle OK (kaggle {__import__('kaggle').__version__})")
 
           KG_USER      = os.environ['KAGGLE_USERNAME']
           KERNEL_SLUG  = os.environ.get('KAGGLE_KERNEL_SLUG', 'viravid-i2v')
@@ -66,9 +69,6 @@ jobs:
           DURATION     = os.environ.get('DURATION', '5')
           RATIO        = os.environ.get('ASPECT_RATIO', '9:16')
           RUN_ID       = str(int(time.time()))
-
-          # Le titre doit slugifier vers KERNEL_SLUG
-          # slug = title.lower().replace(' ', '-')
           KERNEL_TITLE = KERNEL_SLUG.replace('-', ' ')
 
           # Lire le notebook template
@@ -90,11 +90,10 @@ jobs:
                   f"os.environ['GH_TOKEN']     = {json.dumps(GH_TOKEN)}\n",
                   f"os.environ['GH_REPO']      = {json.dumps(GH_REPO)}\n",
                   f"os.environ['RUN_ID']       = {json.dumps(RUN_ID)}\n",
-                  "print('✓ Params injectés')\n"
+                  "print('Params OK')\n"
               ]
           })
 
-          # Créer dossier temp avec notebook + kernel-metadata.json
           tmpdir = tempfile.mkdtemp()
           nb_file = os.path.join(tmpdir, f'{KERNEL_SLUG}.ipynb')
           with open(nb_file, 'w') as f:
@@ -116,10 +115,10 @@ jobs:
                   "kernel_sources":      []
               }, f)
 
-          print(f'Pushing update kernel {KG_USER}/{KERNEL_SLUG}...')
+          print(f'Pushing {KG_USER}/{KERNEL_SLUG}...')
           api.kernels_push(tmpdir)
           shutil.rmtree(tmpdir)
-          print(f'✓ Kernel mis à jour et lancé — RUN_ID={RUN_ID}')
+          print(f'✓ Kernel lancé — RUN_ID={RUN_ID}')
 
           with open('/tmp/run_id.txt', 'w') as f:
               f.write(RUN_ID)
@@ -153,33 +152,26 @@ jobs:
               RUN_ID = f.read().strip()
 
           TAG = f'viravid-{RUN_ID}'
-          print(f'Poll kernel {KG_USER}/{KERNEL_SLUG} + Release {TAG}...')
-
+          print(f'Poll {KG_USER}/{KERNEL_SLUG} → Release {TAG}')
           max_wait, interval, elapsed = 1200, 20, 0
 
           while elapsed < max_wait:
               time.sleep(interval)
               elapsed += interval
 
-              # Statut kernel via SDK
+              # Statut kernel (API REST dans v1.5.16)
               try:
                   st = api.kernels_status(f'{KG_USER}/{KERNEL_SLUG}')
-                  # st peut être un dict ou un objet
-                  if hasattr(st, '__dict__'):
-                      kstatus = getattr(st, 'status', '?')
-                  elif isinstance(st, dict):
-                      kstatus = st.get('status', '?')
-                  else:
-                      kstatus = str(st)
+                  kstatus = st.get('status', '?') if isinstance(st, dict) else str(getattr(st, 'status', st))
                   print(f'[{elapsed}s] Kaggle: {kstatus}')
                   if str(kstatus).lower() in ('error', 'cancelacknowledged', 'cancelled'):
-                      raise SystemExit(f'Kernel Kaggle en erreur: {kstatus}')
+                      raise SystemExit(f'Kernel en erreur: {kstatus}')
               except SystemExit:
                   raise
               except Exception as e:
-                  print(f'[{elapsed}s] status error: {e}')
+                  print(f'[{elapsed}s] status: {e}')
 
-              # Chercher la Release GitHub créée par le notebook
+              # Chercher la Release GitHub
               rel_r = requests.get(
                   f'https://api.github.com/repos/{GH_REPO}/releases/tags/{TAG}',
                   headers=GH_HEADERS, timeout=10)
@@ -187,12 +179,12 @@ jobs:
                   assets = rel_r.json().get('assets', [])
                   if assets:
                       dl_url = assets[0]['browser_download_url']
-                      print(f'✓ Vidéo prête: {dl_url}')
+                      print(f'✓ Vidéo: {dl_url}')
                       with open('/tmp/video_url.txt', 'w') as f:
                           f.write(dl_url)
                       summary = os.environ.get('GITHUB_STEP_SUMMARY', '/dev/null')
                       with open(summary, 'a') as f:
-                          f.write(f'## ✅ Vidéo prête\n**URL:** {dl_url}\n**Tag:** `{TAG}`\n')
+                          f.write(f'## ✅ Vidéo\n**URL:** {dl_url}\n**Tag:** `{TAG}`\n')
                       break
               else:
                   print(f'  Release {rel_r.status_code}')
