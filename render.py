@@ -33,9 +33,9 @@ DEFAULTS = {
 
     # ── Dialogue Cut Engine ─────────────────────────────────────────
     "dialogue_cut":       False,
-    "dialogue_noise_db":  -28,
-    "dialogue_min_pause": 0.08,
-    "dialogue_tolerance": 1.5,
+    "dialogue_noise_db":  -32,
+    "dialogue_min_pause": 0.06,
+    "dialogue_tolerance": 2.5,
     "dialogue_in_snap":   False,
     "dialogue_xfade_min": 0.15,
     "dialogue_xfade_max": 0.35,
@@ -146,14 +146,16 @@ def find_cut_out(silences, target, clip_max, tolerance):
     candidates.sort(key=lambda x: x[0])
 
     for (dist, mid, s, e) in candidates:
-        if mid <= clip_max:
-            print(f"      snap OUT -> silence mid  {mid:.3f}s  "
-                  f"[{s:.2f}-{e:.2f}]  delta={dist:.3f}s")
-            return mid, "silence_mid"
+        # Priorité : fin du silence (après la dernière syllabe) — pas le milieu
+        # Évite de couper une phrase avant la fin du dernier mot
         if e <= clip_max:
             print(f"      snap OUT -> silence end  {e:.3f}s  "
-                  f"[{s:.2f}-{e:.2f}]")
+                  f"[{s:.2f}-{e:.2f}]  delta={dist:.3f}s")
             return e, "silence_end"
+        if mid <= clip_max:
+            print(f"      snap OUT -> silence mid  {mid:.3f}s  "
+                  f"[{s:.2f}-{e:.2f}]")
+            return mid, "silence_mid"
         if s >= 0.5:
             cut = min(s, clip_max)
             print(f"      snap OUT -> silence start {cut:.3f}s  "
