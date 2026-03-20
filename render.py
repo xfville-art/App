@@ -1093,38 +1093,41 @@ def start():
         map_v = f"-map 0:{h264_idx}" if h264_idx is not None else "-map 0:v:0"
 
         # ── Auto-crop + scale-fill 9:16 ──────────────────────────────
-        # 1. Détecte les bandes noires/blanches source via cropdetect
+        # 1. Détecte les bandes source via cropdetect (seuil élevé pour attraper
+        #    les fonds gris/beige de carte Crados, pas seulement le noir pur)
         # 2. Crop pour les retirer
         # 3. Scale-fill : surscale puis crop centré → plein écran sans bandes
         def get_crop(path, map_flag):
             """Retourne 'w:h:x:y' ou None si pas de bandes détectées."""
             try:
-                r2 = subprocess.run(
-                    f'ffmpeg -ss 0.5 -t 3 -i "{path}" {map_flag} '
-                    f'-vf "cropdetect=limit=24:round=2:reset=0" -f null - 2>&1',
-                    shell=True, capture_output=True, text=True
-                )
-                out = r2.stdout + r2.stderr
-                crops = []
-                for line in out.splitlines():
-                    if "crop=" in line and "Parsed_cropdetect" in line:
-                        c = line.split("crop=")[-1].strip().split()[0]
-                        crops.append(c)
-                if not crops:
-                    return None
-                # Prendre le crop le plus fréquent (dernière valeur stabilisée)
-                cw, ch, cx, cy = map(int, crops[-1].split(":"))
-                src_probe = ffprobe(path)
-                vs = [s for s in src_probe.get("streams", [])
-                      if s.get("codec_type") == "video"]
-                if not vs:
-                    return None
-                sw = int(vs[0].get("width", cw))
-                sh = int(vs[0].get("height", ch))
-                # Ignorer si le crop est quasi-identique à la source (< 2% de marge)
-                if abs(cw - sw) < sw * 0.02 and abs(ch - sh) < sh * 0.02:
-                    return None
-                return f"{cw}:{ch}:{cx}:{cy}"
+                # Essai 1 : seuil 64 (attrape gris, beige, bords de carte)
+                # Essai 2 : seuil 24 (fallback conservateur)
+                for limit in (64, 24):
+                    r2 = subprocess.run(
+                        f'ffmpeg -ss 0.5 -t 3 -i "{path}" {map_flag} '
+                        f'-vf "cropdetect=limit={limit}:round=2:reset=0" -f null - 2>&1',
+                        shell=True, capture_output=True, text=True
+                    )
+                    out = r2.stdout + r2.stderr
+                    crops = []
+                    for line in out.splitlines():
+                        if "crop=" in line and "Parsed_cropdetect" in line:
+                            c = line.split("crop=")[-1].strip().split()[0]
+                            crops.append(c)
+                    if not crops:
+                        continue
+                    cw, ch, cx, cy = map(int, crops[-1].split(":"))
+                    src_probe = ffprobe(path)
+                    vs = [s for s in src_probe.get("streams", [])
+                          if s.get("codec_type") == "video"]
+                    if not vs:
+                        return None
+                    sw = int(vs[0].get("width", cw))
+                    sh = int(vs[0].get("height", ch))
+                    # Appliquer si le crop retire au moins 1% sur un axe
+                    if abs(cw - sw) >= sw * 0.01 or abs(ch - sh) >= sh * 0.01:
+                        return f"{cw}:{ch}:{cx}:{cy}"
+                return None
             except Exception:
                 return None
 
