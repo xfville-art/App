@@ -120,49 +120,22 @@ def detect_silences(path, noise_db=-35, min_dur=0.10):
     return sorted(silences, key=lambda x: x[0])
 
 
-def _has_speech_after(silences, cut_t, clip_max, lookahead=0.8):
-    """
-    Retourne True si du dialogue existe dans [cut_t, cut_t+lookahead].
-    Permet de détecter si un silence n'est qu'une pause inter-mots.
-    """
-    for (s, e) in silences:
-        # S'il y a un intervalle de parole entre cut_t et cut_t+lookahead
-        # = une zone non couverte par un silence dans cette fenêtre
-        pass
-    # Construire les zones de parole après cut_t
-    speech_start = cut_t
-    for (s, e) in sorted(silences):
-        if e <= cut_t:
-            continue
-        if s <= cut_t:
-            speech_start = e  # silence englobe cut_t
-            continue
-        # Pause at (s,e) : speech exists in [speech_start, s]
-        if s - speech_start > 0.05 and s < cut_t + lookahead:
-            return True  # il y a de la parole avant le prochain silence
-        speech_start = e
-        if speech_start >= cut_t + lookahead:
-            break
-    return False
-
-
 def find_cut_out(silences, target, clip_max, tolerance):
     """
     Trouve le meilleur point de coupe OUT.
 
-    Priorité : trouver un silence APRÈS lequel il n'y a plus de dialogue
-    dans les 0.8s suivantes (évite de couper au milieu d'une phrase).
-    Cherche d'abord les silences proches de target, puis s'étend vers
-    la fin du clip si du dialogue suit.
+    Priorite :
+      1. Midpoint de la pause la plus proche de target (dans +/-tolerance)
+      2. End-edge de la pause si mid depasse clip_max
+      3. Start-edge de la pause
+      4. target brut (fallback)
 
     Retourne (cut_time, label). cut_time est toujours <= clip_max.
     """
-    LOOKAHEAD = 0.8   # secondes : si du dialogue suit dans cette fenêtre → pas de coupe
-
     window_lo = target - tolerance
     window_hi = target + tolerance
 
-    # Candidats : silences dans la fenêtre [target-tol, target+tol]
+    # Construire les candidats : silences qui chevauchent la fenetre
     candidates = []
     for (s, e) in silences:
         if e < window_lo or s > window_hi:
@@ -173,30 +146,21 @@ def find_cut_out(silences, target, clip_max, tolerance):
     candidates.sort(key=lambda x: x[0])
 
     for (dist, mid, s, e) in candidates:
-        cut = e if e <= clip_max else (mid if mid <= clip_max else None)
-        if cut is None:
-            continue
-        # Vérifier qu'il n'y a pas de parole juste après ce silence
-        if _has_speech_after(silences, cut, clip_max, LOOKAHEAD):
-            # Il y a encore du dialogue après → chercher un silence plus tard
-            print(f"      skip silence [{s:.2f}-{e:.2f}] : parole détectée après {cut:.3f}s")
-            continue
-        print(f"      snap OUT -> silence end  {cut:.3f}s  "
-              f"[{s:.2f}-{e:.2f}]  delta={dist:.3f}s")
-        return cut, "silence_end"
-
-    # Fallback : prendre le DERNIER silence avant clip_max
-    # (garantit qu'on inclut toute la phrase finale)
-    last_cut = None
-    for (s, e) in sorted(silences):
-        if s > clip_max:
-            break
-        candidate = min(e, clip_max)
-        if candidate >= target - tolerance:
-            last_cut = candidate
-    if last_cut is not None:
-        print(f"      snap OUT -> last silence {last_cut:.3f}s (phrase complète)")
-        return last_cut, "last_silence"
+        # Priorité : fin du silence (après la dernière syllabe) — pas le milieu
+        # Évite de couper une phrase avant la fin du dernier mot
+        if e <= clip_max:
+            print(f"      snap OUT -> silence end  {e:.3f}s  "
+                  f"[{s:.2f}-{e:.2f}]  delta={dist:.3f}s")
+            return e, "silence_end"
+        if mid <= clip_max:
+            print(f"      snap OUT -> silence mid  {mid:.3f}s  "
+                  f"[{s:.2f}-{e:.2f}]")
+            return mid, "silence_mid"
+        if s >= 0.5:
+            cut = min(s, clip_max)
+            print(f"      snap OUT -> silence start {cut:.3f}s  "
+                  f"[{s:.2f}-{e:.2f}]")
+            return cut, "silence_start"
 
     cut = min(target, clip_max)
     print(f"      snap OUT -> fallback {cut:.3f}s  "
@@ -798,11 +762,17 @@ RÈGLES Les Crados TikTok :
 - Durée idéale finale : 7-12s pour PUNCH (logo 2.5s inclus), 20-26s pour CINÉMA
 - hook_dur : entre {hook_min}s et {hook_max}s (pas moins de {hook_min}s)
 - punch_dur : entre {punch_min}s et {punch_max}s (pas moins de {punch_min}s)
-- Le clip le plus visuellement fort = hook
-- Punchline = dernier clip, doit être absurde/choquant
+- Le clip le plus visuellement fort (action, émotion forte, objet bizarre) = hook
+- Punchline = dernier clip, doit être absurde/choquant/révélation
 - Loop parfait = fin qui rappelle le début
-- Flash cut + zoom punch = essentiels pour le PUNCH
+- Flash cut = essentiel pour le PUNCH
 - Si 1 seul clip : mode CINÉMA obligatoire
+- stickers=true si le contenu est visuel et absurde (personnage grotesque, action choquante)
+- dialogue_cut=true si les clips ont clairement une voix/narration à respecter
+- scene_thr : bas (0.04) si beaucoup d'action rapide, haut (0.08) si plans lents/statiques
+- grade_saturation : monte à 1.3-1.4 pour un look BD coloré si les couleurs sources le permettent
+- clip_order : réordonner pour créer une montée en tension (calme→action→explosion)
+- cinema_dur : choisir selon le rythme narratif des clips (court=10s si punch, long=25s si storytelling)
 
 Réponds UNIQUEMENT en JSON valide, zéro texte avant ou après :
 {{
@@ -825,8 +795,13 @@ Réponds UNIQUEMENT en JSON valide, zéro texte avant ou après :
     "core_dur": <float>,
     "punch_dur": <float entre {punch_min} et {punch_max}>,
     "flash_cut": <bool>,
-    "zoom_punch": <bool>,
-    "ai_text": <bool>
+    "ai_text": <bool>,
+    "stickers": <bool — true si contenu visuel fort/absurde, false si sobre>,
+    "cinema_dur": <float 10-30 — durée totale en mode cinéma, null si mode punch>,
+    "clip_order": <liste des indices clips dans l'ordre optimal, ex [1,0,2] — null si ordre actuel est bon>,
+    "dialogue_cut": <bool — true si les clips ont du dialogue à couper proprement>,
+    "scene_thr": <float 0.04-0.10 — 0.04 si action rapide/cuts fréquents, 0.08 si plan statique>,
+    "grade_saturation": <float 1.0-1.4 — 1.3+ si couleurs vives souhaitées, 1.0 si sobre>
   }}
 }}"""
 
@@ -1279,6 +1254,32 @@ def start():
             target = min(max(opts.get("cinema_dur", cfg(opts, "cinema_dur")), n * 3.0), 60)
             clip_dur = max((target - xf_b * (n - 1)) / n, MIN_CLIP_DUR)
             print(f"  Durée segment (cinema/auto) : {clip_dur:.2f}s")
+
+        # 3. Paramètres montage étendus (nouveaux champs viralité)
+        if rc.get("stickers") is not None:
+            opts["stickers"] = bool(rc["stickers"])
+            print(f"  Stickers viralité        : {opts['stickers']}")
+        if rc.get("dialogue_cut") is not None:
+            opts["dialogue_cut"] = bool(rc["dialogue_cut"])
+            print(f"  Dialogue cut viralité    : {opts['dialogue_cut']}")
+        if rc.get("scene_thr") is not None:
+            try:
+                opts["scene_thr"] = round(max(0.03, min(0.12, float(rc["scene_thr"]))), 3)
+                print(f"  Scene thr viralité       : {opts['scene_thr']}")
+            except Exception:
+                pass
+        if rc.get("grade_saturation") is not None:
+            try:
+                opts["grade_saturation"] = round(max(1.0, min(1.5, float(rc["grade_saturation"]))), 2)
+                print(f"  Grade saturation viralité: {opts['grade_saturation']}")
+            except Exception:
+                pass
+        if rc.get("cinema_dur") is not None and mode_eff != "punch":
+            try:
+                opts["cinema_dur"] = round(max(8.0, min(60.0, float(rc["cinema_dur"]))), 1)
+                print(f"  Cinema dur viralité      : {opts['cinema_dur']}s")
+            except Exception:
+                pass
 
     # ── Durées par segment ──────────────────────────────────────────
     # Durées effectives = min(valeur UI/viralité, durée source dispo) mais plancher absolu
