@@ -710,6 +710,36 @@ def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts, role="core"):
     )
     vf = f"{vf},{ai_wm_cover}"
 
+    # ── Hook textuel IA (v15) ─────────────────────────────────────────
+    # Si custom_hook est fourni ET qu'on est sur le clip hook → drawtext
+    # Texte affiché dès le début, fondu sortie sur la dernière seconde.
+    # Position : haut de l'écran, centré, rouge Crados avec ombre.
+    custom_hook = opts.get("custom_hook", "").strip()
+    if role == "hook" and custom_hook:
+        hook_sz    = max(28, int(H_i * 0.040))   # ~4% hauteur
+        hook_y     = int(H_i * 0.06)              # 6% depuis le haut
+        hook_fade  = max(0.0, actual - 0.8)        # fade out 0.8s avant fin
+        hook_alpha = f"if(lt(t,0.25),t/0.25,if(gt(t,{hook_fade:.3f}),(t-{hook_fade:.3f})/0.8,1))"
+        # Écrire dans un fichier texte — évite tout problème d'échappement
+        with open("_hook_text.txt", "w", encoding="utf-8") as _hf:
+            _hf.write(custom_hook)
+        # Ombre portée
+        vf += (
+            f",drawtext=fontfile={FONT}:textfile=_hook_text.txt:"
+            f"fontsize={hook_sz}:fontcolor=black@0.6:"
+            f"x=(w-text_w)/2+2:y={hook_y+2}:"
+            f"alpha='{hook_alpha}'"
+        )
+        # Texte principal rouge Crados
+        vf += (
+            f",drawtext=fontfile={FONT}:textfile=_hook_text.txt:"
+            f"fontsize={hook_sz}:fontcolor=#FF2442:"
+            f"bordercolor=black:borderw=2:"
+            f"x=(w-text_w)/2:y={hook_y}:"
+            f"alpha='{hook_alpha}'"
+        )
+        print(f"      [HookText] \"{custom_hook}\"  sz={hook_sz}  y={hook_y}")
+
     # ── Extraction ────────────────────────────────────────────────────
     ss_flag = f"-ss {in_pt:.3f}" if in_pt > 0.001 else ""
 
