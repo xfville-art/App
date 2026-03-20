@@ -613,7 +613,6 @@ def assemble_cinema(segments, opts):
 def build_cinema_overlay_no_text(opts):
     W, H    = cfg(opts, "resolution").split("x")
     Wi, Hi  = int(W), int(H)
-    lb_h    = cfg(opts, "cinema_lb_h")
     total   = duration("_assembled.mp4")
     LOGO_DUR = 2.5  # durée du logo splash
 
@@ -622,10 +621,7 @@ def build_cinema_overlay_no_text(opts):
     fade_out_st  = max(0.0, total - fade_out_d)
     fade_in_d    = 0.25
 
-    lb = (
-        f"drawbox=y=0:h={lb_h}:c=black@1:t=fill,"
-        f"drawbox=y={Hi - lb_h}:h={lb_h}:c=black@1:t=fill"
-    )
+    # Letterbox supprimée — format d'origine conservé plein écran
     # Vignette par drawbox (vignette= absent sur runners GitHub Actions)
     vig2 = int(min(Wi, Hi) * 0.15)
     vig_filter = (
@@ -635,7 +631,7 @@ def build_cinema_overlay_no_text(opts):
         f"drawbox=x={Wi-vig2}:y=0:w={vig2}:h={Hi}:color=black@0.28:t=fill"
     )
     fades = f"fade=t=in:st=0:d={fade_in_d},fade=t=out:st={fade_out_st:.2f}:d={fade_out_d}"
-    vf = f"{lb},{vig_filter},{fades}"
+    vf = f"{vig_filter},{fades}"
 
     # Pas de fade audio ici — on le fait sur output.mp4 final (après logo)
     run(
