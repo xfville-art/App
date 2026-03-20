@@ -1,4 +1,4 @@
-name: Wan2.1 Image-to-Video (Kaggle GPU)
+name: Wan2.1 Image-to-Video (fal.ai)
 
 on:
   workflow_dispatch:
@@ -21,178 +21,214 @@ on:
         type: string
 
 jobs:
-  launch-kaggle:
+  generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install Kaggle 1.5.16 (avant migration gRPC)
-        # Les versions >= 1.6.0 ont migré kernels_push vers gRPC SaveKernel
-        # qui retourne 401 avec les tokens API depuis l'extérieur.
-        # 1.5.16 utilise encore l'ancienne API REST /kernels/push qui fonctionne.
-        run: pip install "kaggle==1.5.16" requests
+      - name: Install deps
+        run: pip install requests
 
-      - name: Push & run kernel
+      - name: Generate video via fal.ai
         env:
-          KAGGLE_USERNAME:    ${{ secrets.KAGGLE_USERNAME }}
-          KAGGLE_KEY:         ${{ secrets.KAGGLE_KEY }}
-          KAGGLE_KERNEL_SLUG: ${{ secrets.KAGGLE_KERNEL_SLUG }}
-          GH_TOKEN:           ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO:            ${{ github.repository }}
-          PROMPT:             ${{ inputs.prompt }}
-          IMAGE_BASE64:       ${{ inputs.image_base64 }}
-          DURATION:           ${{ inputs.duration }}
-          ASPECT_RATIO:       ${{ inputs.aspect_ratio }}
+          FAL_KEY:     ${{ secrets.FAL_KEY }}
+          GH_TOKEN:    ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO:     ${{ github.repository }}
+          PROMPT:      ${{ inputs.prompt }}
+          IMAGE_B64:   ${{ inputs.image_base64 }}
+          DURATION:    ${{ inputs.duration }}
+          ASPECT:      ${{ inputs.aspect_ratio }}
         run: |
           python3 - << 'PYEOF'
-          import os, json, time, tempfile, shutil
-          from kaggle.api.kaggle_api_extended import KaggleApi
+          import os, requests, time, json, base64
 
-          api = KaggleApi()
-          api.authenticate()
-          print("✓ Auth Kaggle OK (kaggle 1.5.16)")
+          FAL_KEY   = os.environ['FAL_KEY']
+          GH_TOKEN  = os.environ['GH_TOKEN']
+          GH_REPO   = os.environ['GH_REPO']
+          PROMPT    = os.environ['PROMPT']
+          IMG_B64   = os.environ['IMAGE_B64']
+          DURATION  = os.environ.get('DURATION', '5')
+          ASPECT    = os.environ.get('ASPECT', '9:16')
+          RUN_ID    = str(int(time.time()))
 
-          KG_USER      = os.environ['KAGGLE_USERNAME']
-          KERNEL_SLUG  = os.environ.get('KAGGLE_KERNEL_SLUG', 'viravid-i2v')
-          GH_TOKEN     = os.environ['GH_TOKEN']
-          GH_REPO      = os.environ['GH_REPO']
-          PROMPT       = os.environ['PROMPT']
-          IMG_B64      = os.environ['IMAGE_BASE64']
-          DURATION     = os.environ.get('DURATION', '5')
-          RATIO        = os.environ.get('ASPECT_RATIO', '9:16')
-          RUN_ID       = str(int(time.time()))
-          KERNEL_TITLE = KERNEL_SLUG.replace('-', ' ')
-
-          # Lire le notebook template
-          with open('.github/workflows/wan-i2v.ipynb') as f:
-              nb = json.load(f)
-
-          # Injecter les paramètres en première cellule
-          nb['cells'].insert(0, {
-              "cell_type": "code",
-              "execution_count": None,
-              "metadata": {},
-              "outputs": [],
-              "source": [
-                  "import os\n",
-                  f"os.environ['PROMPT']       = {json.dumps(PROMPT)}\n",
-                  f"os.environ['IMAGE_BASE64'] = {json.dumps(IMG_B64)}\n",
-                  f"os.environ['DURATION']     = {json.dumps(DURATION)}\n",
-                  f"os.environ['ASPECT_RATIO'] = {json.dumps(RATIO)}\n",
-                  f"os.environ['GH_TOKEN']     = {json.dumps(GH_TOKEN)}\n",
-                  f"os.environ['GH_REPO']      = {json.dumps(GH_REPO)}\n",
-                  f"os.environ['RUN_ID']       = {json.dumps(RUN_ID)}\n",
-                  "print('Params OK')\n"
-              ]
-          })
-
-          tmpdir = tempfile.mkdtemp()
-          nb_file = os.path.join(tmpdir, f'{KERNEL_SLUG}.ipynb')
-          with open(nb_file, 'w') as f:
-              json.dump(nb, f)
-
-          with open(os.path.join(tmpdir, 'kernel-metadata.json'), 'w') as f:
-              json.dump({
-                  "id":              f"{KG_USER}/{KERNEL_SLUG}",
-                  "title":           KERNEL_TITLE,
-                  "code_file":       f"{KERNEL_SLUG}.ipynb",
-                  "language":        "python",
-                  "kernel_type":     "notebook",
-                  "is_private":      True,
-                  "enable_gpu":      True,
-                  "enable_tpu":      False,
-                  "enable_internet": True,
-                  "dataset_sources":     [],
-                  "competition_sources": [],
-                  "kernel_sources":      []
-              }, f)
-
-          print(f'Pushing {KG_USER}/{KERNEL_SLUG}...')
-          api.kernels_push(tmpdir)
-          shutil.rmtree(tmpdir)
-          print(f'✓ Kernel lancé — RUN_ID={RUN_ID}')
-
-          with open('/tmp/run_id.txt', 'w') as f:
-              f.write(RUN_ID)
-          PYEOF
-
-      - name: Poll kernel + attendre Release GitHub
-        env:
-          KAGGLE_USERNAME:    ${{ secrets.KAGGLE_USERNAME }}
-          KAGGLE_KEY:         ${{ secrets.KAGGLE_KEY }}
-          KAGGLE_KERNEL_SLUG: ${{ secrets.KAGGLE_KERNEL_SLUG }}
-          GH_TOKEN:           ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO:            ${{ github.repository }}
-        run: |
-          python3 - << 'PYEOF'
-          import os, requests, time
-          from kaggle.api.kaggle_api_extended import KaggleApi
-
-          api = KaggleApi()
-          api.authenticate()
-
-          KG_USER     = os.environ['KAGGLE_USERNAME']
-          KERNEL_SLUG = os.environ.get('KAGGLE_KERNEL_SLUG', 'viravid-i2v')
-          GH_TOKEN    = os.environ['GH_TOKEN']
-          GH_REPO     = os.environ['GH_REPO']
-          GH_HEADERS  = {
+          FAL_HEADERS = {
+              'Authorization': f'Key {FAL_KEY}',
+              'Content-Type': 'application/json'
+          }
+          GH_HEADERS = {
               'Authorization': f'token {GH_TOKEN}',
               'Accept': 'application/vnd.github.v3+json'
           }
 
-          with open('/tmp/run_id.txt') as f:
-              RUN_ID = f.read().strip()
+          # ── 1. Upload image vers fal.ai storage ──────────────────────────
+          print('📤 Upload image vers fal.ai...')
+          img_bytes = base64.b64decode(IMG_B64)
 
-          TAG = f'viravid-{RUN_ID}'
-          print(f'Poll {KG_USER}/{KERNEL_SLUG} → Release {TAG}')
-          max_wait, interval, elapsed = 1200, 20, 0
-
-          while elapsed < max_wait:
-              time.sleep(interval)
-              elapsed += interval
-
-              # Statut kernel (API REST dans v1.5.16)
-              try:
-                  st = api.kernels_status(f'{KG_USER}/{KERNEL_SLUG}')
-                  kstatus = st.get('status', '?') if isinstance(st, dict) else str(getattr(st, 'status', st))
-                  print(f'[{elapsed}s] Kaggle: {kstatus}')
-                  if str(kstatus).lower() in ('error', 'cancelacknowledged', 'cancelled'):
-                      raise SystemExit(f'Kernel en erreur: {kstatus}')
-              except SystemExit:
-                  raise
-              except Exception as e:
-                  print(f'[{elapsed}s] status: {e}')
-
-              # Chercher la Release GitHub
-              rel_r = requests.get(
-                  f'https://api.github.com/repos/{GH_REPO}/releases/tags/{TAG}',
-                  headers=GH_HEADERS, timeout=10)
-              if rel_r.status_code == 200:
-                  assets = rel_r.json().get('assets', [])
-                  if assets:
-                      dl_url = assets[0]['browser_download_url']
-                      print(f'✓ Vidéo: {dl_url}')
-                      with open('/tmp/video_url.txt', 'w') as f:
-                          f.write(dl_url)
-                      summary = os.environ.get('GITHUB_STEP_SUMMARY', '/dev/null')
-                      with open(summary, 'a') as f:
-                          f.write(f'## ✅ Vidéo\n**URL:** {dl_url}\n**Tag:** `{TAG}`\n')
-                      break
-              else:
-                  print(f'  Release {rel_r.status_code}')
+          # fal storage upload
+          up = requests.post(
+              'https://rest.alpha.fal.ai/storage/upload/initiate',
+              headers=FAL_HEADERS,
+              json={'file_name': 'source.jpg', 'content_type': 'image/jpeg'},
+              timeout=15
+          )
+          if up.status_code not in (200, 201):
+              # Fallback: upload direct via fal files API
+              up2 = requests.post(
+                  'https://fal.run/fal-ai/storage/upload',
+                  headers={'Authorization': f'Key {FAL_KEY}'},
+                  files={'file': ('source.jpg', img_bytes, 'image/jpeg')},
+                  timeout=30
+              )
+              if up2.status_code not in (200, 201):
+                  print(f'Upload status: {up2.status_code} {up2.text[:200]}')
+                  raise SystemExit('Upload image échoué')
+              image_url = up2.json().get('url') or up2.json().get('access_url')
           else:
-              raise SystemExit('Timeout > 20 min')
+              upload_data = up.json()
+              upload_url  = upload_data.get('upload_url')
+              image_url   = upload_data.get('file_url') or upload_data.get('access_url')
+              # PUT vers S3
+              put_r = requests.put(
+                  upload_url,
+                  data=img_bytes,
+                  headers={'Content-Type': 'image/jpeg'},
+                  timeout=30
+              )
+              put_r.raise_for_status()
+
+          print(f'✓ Image URL: {image_url}')
+
+          # ── 2. Soumettre le job Wan I2V ──────────────────────────────────
+          print('🚀 Soumission job fal-ai/wan-i2v...')
+          ENDPOINT = 'fal-ai/wan-i2v'
+
+          payload = {
+              'prompt':       PROMPT,
+              'image_url':    image_url,
+              'duration':     DURATION,
+              'aspect_ratio': ASPECT,
+              'num_inference_steps': 30,
+              'enable_safety_checker': False
+          }
+
+          sub = requests.post(
+              f'https://queue.fal.run/{ENDPOINT}',
+              headers=FAL_HEADERS,
+              json=payload,
+              timeout=30
+          )
+          if sub.status_code not in (200, 201):
+              print(f'Submit {sub.status_code}: {sub.text[:300]}')
+              raise SystemExit('Soumission job échouée')
+
+          req_id = sub.json().get('request_id')
+          if not req_id:
+              print('Réponse sync:', json.dumps(sub.json(), indent=2)[:300])
+              # Réponse synchrone directe
+              video_url = sub.json().get('video', {}).get('url')
+              if video_url:
+                  print(f'✓ Vidéo (sync): {video_url}')
+              else:
+                  raise SystemExit('request_id et video_url absents')
+          else:
+              print(f'✓ Job soumis — request_id: {req_id}')
+
+              # ── 3. Poll statut ─────────────────────────────────────────
+              print('⏳ Attente génération...')
+              video_url = None
+              max_wait, interval, elapsed = 900, 10, 0
+
+              while elapsed < max_wait:
+                  time.sleep(interval)
+                  elapsed += interval
+
+                  st = requests.get(
+                      f'https://queue.fal.run/{ENDPOINT}/requests/{req_id}/status',
+                      headers=FAL_HEADERS, timeout=15
+                  )
+                  if st.status_code != 200:
+                      print(f'[{elapsed}s] status {st.status_code}')
+                      continue
+
+                  status = st.json().get('status', '?')
+                  print(f'[{elapsed}s] {status}')
+
+                  if status == 'COMPLETED':
+                      res = requests.get(
+                          f'https://queue.fal.run/{ENDPOINT}/requests/{req_id}',
+                          headers=FAL_HEADERS, timeout=15
+                      )
+                      video_url = res.json().get('video', {}).get('url')
+                      break
+                  elif status in ('FAILED', 'ERROR'):
+                      print('Détail:', json.dumps(st.json(), indent=2)[:400])
+                      raise SystemExit(f'Job fal.ai échoué: {status}')
+              else:
+                  raise SystemExit('Timeout > 15 min')
+
+          if not video_url:
+              raise SystemExit('video_url introuvable dans la réponse')
+
+          print(f'✓ Vidéo générée: {video_url}')
+
+          # ── 4. Télécharger le MP4 ────────────────────────────────────────
+          print('📥 Téléchargement MP4...')
+          vr = requests.get(video_url, timeout=120, stream=True)
+          vr.raise_for_status()
+          out = '/tmp/output.mp4'
+          with open(out, 'wb') as f:
+              for chunk in vr.iter_content(8192):
+                  f.write(chunk)
+          size_mb = os.path.getsize(out) / 1048576
+          print(f'✓ MP4: {size_mb:.1f} MB')
+
+          # ── 5. Publier GitHub Release ────────────────────────────────────
+          TAG  = f'viravid-{RUN_ID}'
+          NAME = f'lescrados-{RUN_ID}.mp4'
+          print(f'📦 GitHub Release {TAG}...')
+
+          rel = requests.post(
+              f'https://api.github.com/repos/{GH_REPO}/releases',
+              headers=GH_HEADERS,
+              json={
+                  'tag_name':   TAG,
+                  'name':       f'ViraCut {RUN_ID}',
+                  'body':       f'Prompt: {PROMPT}\nAspect: {ASPECT} | Duration: {DURATION}s',
+                  'draft':      False,
+                  'prerelease': True
+              },
+              timeout=15
+          )
+          rel.raise_for_status()
+          upload_url = rel.json()['upload_url'].replace('{?name,label}', '')
+
+          with open(out, 'rb') as f:
+              up = requests.post(
+                  upload_url,
+                  headers={**GH_HEADERS, 'Content-Type': 'video/mp4'},
+                  params={'name': NAME},
+                  data=f, timeout=120
+              )
+          up.raise_for_status()
+
+          dl_url = up.json()['browser_download_url']
+          print(f'✓ Release: {dl_url}')
+
+          # Summary pour l'app HTML
+          summary = os.environ.get('GITHUB_STEP_SUMMARY', '/dev/null')
+          with open(summary, 'a') as f:
+              f.write(f'## ✅ Vidéo\n**URL:** {dl_url}\n**Tag:** `{TAG}`\n')
+
+          with open('/tmp/video_url.txt', 'w') as f:
+              f.write(dl_url)
           PYEOF
 
-      - name: Upload video URL
+      - name: Upload video URL artifact
         uses: actions/upload-artifact@v4
         with:
           name: video-url
