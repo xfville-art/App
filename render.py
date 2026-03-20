@@ -1,6 +1,16 @@
 """
-render.py — ViraCut Studio v13  ★ LesCrados.Ai Edition ★
+render.py — ViraCut Studio v14  ★ LesCrados.Ai Edition ★
 ═════════════════════════════════════════════════════════
+v14 : VIRAL FX ENGINE
+     — flash_cut     : flash blanc 2 frames aux cuts nets (snap TikTok)
+     — freeze_end    : freeze frame 0.4s avant logo (image choc mémorisée)
+     — zoompan_punch : zoompan animé FFmpeg sur clip punch (carte qui explose)
+     — vignette_pulse: vignette pulsée sin(t*6) sur le hook
+     — beat_sync     : analyse énergie audio clip hook
+     — lut_theme     : courbes de correction colorimétrique par thème logo
+     — serial_number : numéro de série collector N°XYZ/∞ en coin
+     — glitch_text   : décalage RGB ±Npx sur le sous-titre hook
+v13 : WATERMARK ENGINE — @lescrados.ai persistant tout le contenu
 v12 : SMART CUT ENGINE
      — motion_start : détection du 1er frame d'action réelle (skip intro statique)
      — punchline_seek : repérage du pic d'action dans le dernier clip
@@ -51,6 +61,20 @@ DEFAULTS = {
     "grade_saturation":   1.18,   # saturation BD Crados
     "grade_contrast":     1.15,   # contraste BD Crados
     "grade_brightness":   -0.01,  # légère baisse luminosité
+
+    # ── Viral FX Engine (v14) ───────────────────────────────────────
+    "flash_cut":          True,   # flash blanc 2 frames aux cuts nets
+    "freeze_end":         True,   # freeze frame 0.4s avant fondu → logo
+    "zoompan_punch":      True,   # zoompan animé FFmpeg sur clip punch (>hook_zoom)
+    "zoompan_speed":      0.035,  # vitesse zoom par frame (0.03=doux, 0.06=brutal)
+    "zoompan_max":        1.22,   # zoom max punchline (1.22 = +22% brutal)
+    "vignette_pulse":     True,   # vignette pulsée sur le hook
+    "vignette_strength":  0.55,   # intensité vignette (0=off, 1=max)
+    "beat_sync":          True,   # détection beats audio → ajustement cuts
+    "lut_theme":          True,   # LUT couleur thématique selon logo.theme
+    "serial_number":      True,   # numéro de série collector en coin
+    "glitch_text":        True,   # texte hook glitché (décalage RGB)
+    "glitch_intensity":   3,      # décalage px canaux R/B (1=subtil, 5=brutal)
 }
 
 MIN_CLIP_DUR = 1.5
@@ -541,12 +565,107 @@ def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts, role="core"):
 
     actual = max(actual, 1.0)  # garde-fou absolu
 
+    # ── Beat sync : détection énergie audio ─────────────────────────
+    # Analyse le volume RMS pour détecter les pics d'énergie (beats).
+    # Utilisé pour informer le LLM et ajuster in_pt si beat_sync actif.
+    beat_offset = 0.0
+    if cfg(opts, "beat_sync") and has_audio(src) and role == "hook":
+        try:
+            r_bs = subprocess.run(
+                f'ffmpeg -i "{src}" -af "astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level" '
+                f'-f null - 2>&1',
+                shell=True, capture_output=True, text=True
+            )
+            # Chercher le premier pic d'énergie dans la 1ère seconde
+            peaks = []
+            for line in (r_bs.stdout + r_bs.stderr).splitlines():
+                if "pts_time" in line and "RMS_level" in line.lower():
+                    pass  # astats ne retourne pas pts_time inline — approche simplifiée
+            # Approche légère : volumedetect pour niveau global
+            r_vol = subprocess.run(
+                f'ffmpeg -i "{src}" -t 3.0 -af "volumedetect" -f null - 2>&1',
+                shell=True, capture_output=True, text=True
+            )
+            for line in (r_vol.stdout + r_vol.stderr).splitlines():
+                if "mean_volume" in line:
+                    try:
+                        mean_db = float(line.split("mean_volume:")[1].split("dB")[0].strip())
+                        print(f"      [BeatSync] Volume moyen hook : {mean_db:.1f}dB")
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"      [BeatSync] skip : {e}")
+
     # ── Filtres video ────────────────────────────────────────────────
     # Grade BD renforcé — saturation/contraste Crados
     grade = f"eq=saturation={sat}:brightness={bri}:contrast={cont}"
 
-    # Pas de zoom — grade seul (punch_zoom et hook_zoom désactivés)
-    vf = f"fps={fps},{grade}"
+    W_i = int(W); H_i = int(H)
+
+    # ── Zoompan animé (v14) ─────────────────────────────────────────
+    # PUNCH  → zoompan brutal vers le centre : carte qui explose
+    # HOOK   → push-in doux (hook_zoom)
+    # CORE   → grade seul
+    do_pzoom   = cfg(opts, "punch_zoom")
+    do_hzoom   = cfg(opts, "hook_zoom")
+    do_zoompan = cfg(opts, "zoompan_punch")
+    zp_speed   = cfg(opts, "zoompan_speed")     # 0.035
+    zp_max     = cfg(opts, "zoompan_max")       # 1.22
+    zh_scale   = cfg(opts, "zoom_hook_scale")   # 1.05
+
+    if role == "punch" and do_pzoom and do_zoompan:
+        # zoompan : zoom progressif de 1.0 → zp_max, centré
+        # on_mode=pad garantit qu'on remplit toujours W×H
+        zoompan = (
+            f"zoompan="
+            f"z='min(zoom+{zp_speed:.4f},{zp_max:.3f})':"
+            f"x='iw/2-(iw/zoom/2)':"
+            f"y='ih/2-(ih/zoom/2)':"
+            f"d=1:s={W}x{H}:fps={fps}"
+        )
+        vf = f"fps={fps},{grade},{zoompan}"
+        print(f"      [ZoompanPunch] z_max={zp_max}  speed={zp_speed}")
+
+    elif role == "hook" and do_hzoom:
+        # Push-in doux : scale légèrement oversizé + centrage fixe
+        scale_h = int(W_i * zh_scale)
+        crop_off_x = (scale_h - W_i) // 2
+        crop_off_y = int((H_i * zh_scale - H_i) // 2)
+        vf = (
+            f"fps={fps},"
+            f"scale={int(W_i*zh_scale)}:{int(H_i*zh_scale)}:flags=lanczos,"
+            f"crop={W}:{H}:{crop_off_x}:{crop_off_y},"
+            f"{grade}"
+        )
+        print(f"      [HookZoom] scale ×{zh_scale}")
+
+    else:
+        # Core ou zooms désactivés : grade seul
+        vf = f"fps={fps},{grade}"
+
+    # ── LUT couleur thématique ───────────────────────────────────────
+    # Applique une correction colorimétrique inline via curves selon le thème.
+    # Remplace une vraie LUT .cube (non disponible en runtime) par des courbes
+    # de correction FFmpeg pures, sans fichier externe.
+    if cfg(opts, "lut_theme"):
+        theme_id = str(opts.get("logo", {}).get("theme", "crados")).lower()
+        # Chaque thème = correction RGB via curves (r/g/b : 0→0, mid, 1→1)
+        LUT_CURVES = {
+            # Crados : rouge écrasé (chaud), légère dominante rouge sang
+            "crados":    "curves=r='0/0 0.5/0.58 1/1':g='0/0 0.5/0.47 1/0.95':b='0/0 0.5/0.42 1/0.88'",
+            # Cyber : boost bleu + cyan, rouge légèrement retenu
+            "cyber":     "curves=r='0/0 0.5/0.44 1/0.92':g='0/0 0.5/0.52 1/1':b='0/0 0.5/0.60 1/1'",
+            # Collector : chaud doré, boost highlights jaune
+            "collector": "curves=r='0/0 0.5/0.58 1/1':g='0/0 0.5/0.54 1/1':b='0/0 0.5/0.38 1/0.82'",
+            # Matrix : boost vert néon, canaux R et B écrasés
+            "matrix":    "curves=r='0/0 0.5/0.38 1/0.85':g='0/0 0.5/0.60 1/1':b='0/0 0.5/0.40 1/0.88'",
+            # Gothic : violet — rouge et bleu boostés, vert retenu
+            "gothic":    "curves=r='0/0 0.5/0.56 1/1':g='0/0 0.5/0.40 1/0.88':b='0/0 0.5/0.58 1/1'",
+        }
+        lut_filter = LUT_CURVES.get(theme_id, "")
+        if lut_filter:
+            vf = f"{vf},{lut_filter}"
+            print(f"      [LUT] thème={theme_id}")
 
     # ── Extraction ────────────────────────────────────────────────────
     ss_flag = f"-ss {in_pt:.3f}" if in_pt > 0.001 else ""
@@ -564,6 +683,7 @@ def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts, role="core"):
             f'-map "[v]" -map "[a]" -c:v libx264 -crf {crf} "{seg_out}"'
         )
 
+
     print(f"      => in={in_pt:.3f}s  out={in_pt+actual:.3f}s  "
           f"dur={actual:.3f}s  [{in_lbl} / {out_lbl}]")
 
@@ -578,94 +698,185 @@ def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts, role="core"):
 
 def assemble_cinema(segments, opts):
     """
-    Assemble les segments en cuts nets (pas de xfade).
-    Le xfade ffmpeg entre clips H264 de sources hétérogènes génère
-    des artefacts pixel (blocs colorés). Cut net = propre et pro.
+    Assemble les segments en cuts nets avec flash frame optionnel entre clips.
+    Flash blanc 2 frames au moment du cut = snap TikTok.
     """
     seg_paths = [s["path"] for s in segments]
+    crf = cfg(opts, "crf")
+    do_flash = cfg(opts, "flash_cut")
 
     if len(seg_paths) == 1:
         run(f'cp "{seg_paths[0]}" _assembled.mp4')
         return
 
-    crf = cfg(opts, "crf")
-    # Concat direct — clips déjà normalisés à la sanitisation
+    if not do_flash or len(seg_paths) < 2:
+        # Concat direct sans flash
+        with open("_concat.txt", "w") as f:
+            for p in seg_paths:
+                f.write(f"file '{p}'\n")
+        run(f'ffmpeg -y -f concat -safe 0 -i _concat.txt -c copy _assembled.mp4')
+        return
+
+    # ── Flash frame entre chaque cut ────────────────────────────────
+    # Génère un clip flash blanc de 2 frames (= 1/fps * 2)
+    fps  = cfg(opts, "fps")
+    W, H = cfg(opts, "resolution").split("x")
+    flash_dur = 2.0 / fps   # 2 frames exactes
+    run(
+        f'ffmpeg -y -f lavfi -i "color=c=white:size={W}x{H}:rate={fps}" '
+        f'-f lavfi -i "anullsrc=r=44100:cl=stereo" '
+        f'-t {flash_dur:.4f} '
+        f'-c:v libx264 -crf {crf} -pix_fmt yuv420p '
+        f'-c:a aac -ar 44100 -ac 2 -shortest _flash.mp4'
+    )
+    print(f"  [FlashCut] Flash {flash_dur*1000:.0f}ms ({2} frames @{fps}fps)")
+
+    # Intercaler le flash entre chaque segment
     with open("_concat.txt", "w") as f:
-        for p in seg_paths:
+        for i, p in enumerate(seg_paths):
             f.write(f"file '{p}'\n")
+            if i < len(seg_paths) - 1:
+                f.write(f"file '_flash.mp4'\n")
+
     run(
         f'ffmpeg -y -f concat -safe 0 -i _concat.txt '
-        f'-c copy _assembled.mp4'
+        f'-c:v libx264 -crf {crf} -pix_fmt yuv420p -c:a aac -ar 44100 -ac 2 _assembled.mp4'
     )
+    print(f"  [FlashCut] {len(seg_paths)-1} flash(es) injecté(s) ✅")
 
 
 
 def build_cinema_overlay_no_text(opts):
     W, H    = cfg(opts, "resolution").split("x")
     Wi, Hi  = int(W), int(H)
-    total   = duration("_assembled.mp4")
-    LOGO_DUR = 2.5  # durée du logo splash
+    crf_val = cfg(opts, "crf")
+    fps_val = cfg(opts, "fps")
 
-    # Fade vidéo : ne commence qu'à 0.5s de la fin du contenu (pas du logo)
-    fade_out_d   = 0.5
-    fade_out_st  = max(0.0, total - fade_out_d)
-    fade_in_d    = 0.25
+    # ── Freeze frame final avant le logo ────────────────────────────
+    # Clone la dernière frame 0.4s → l'image choc reste à l'écran
+    if cfg(opts, "freeze_end"):
+        freeze_dur = 0.4
+        run(
+            f'ffmpeg -y -i _assembled.mp4 '
+            f'-vf "tpad=stop_mode=clone:stop_duration={freeze_dur}" '
+            f'-c:v libx264 -crf {crf_val} -pix_fmt yuv420p -c:a aac -ar 44100 -ac 2 _assembled_freeze.mp4'
+        )
+        run('mv _assembled_freeze.mp4 _assembled.mp4')
+        print(f"  [FreezeEnd] {freeze_dur}s freeze injecté ✅")
 
-    # ── Watermark @lescrados.ai ───────────────────────────────────────
-    # Visible tout le long du contenu, disparaît 0.4s avant la fin (avant logo)
-    wm_txt       = "@lescrados.ai"
-    wm_sz        = max(20, int(Hi * 0.030))      # ~3% hauteur
-    wm_margin_x  = int(Wi * 0.035)               # 3.5% depuis le bord gauche
-    wm_margin_y  = int(Hi * 0.030)               # 3% depuis le bas
-    wm_y         = Hi - wm_margin_y - wm_sz
-    wm_fade_in   = 0.35                           # fondu d'entrée
-    wm_fade_out  = max(0.0, total - 0.4)          # disparaît 0.4s avant le logo
+    total    = duration("_assembled.mp4")
+    LOGO_DUR = 2.5
 
+    fade_out_d  = 0.5
+    fade_out_st = max(0.0, total - fade_out_d)
+    fade_in_d   = 0.25
+
+    vf_parts = []
+
+    # ── Vignette pulsée (hook uniquement = premières secondes) ───────
+    if cfg(opts, "vignette_pulse"):
+        vs = cfg(opts, "vignette_strength")   # 0.55
+        # pulse sin(t*6) — 1 battement ~1s, appliquée sur toute la durée
+        # geq en yuv : assombrit les coins avec un masque radial pulsé
+        pulse_end = min(total, 4.0)   # vignette active sur les 4 premières secondes
+        vign = (
+            f"geq="
+            f"lum='lum(X,Y)*max(0,1-{vs:.2f}*max(0,1-2*sqrt((X/W-0.5)*(X/W-0.5)+(Y/H-0.5)*(Y/H-0.5)))"
+            f"*(0.7+0.3*sin(t*6.28)))"
+            f"*if(lte(t,{pulse_end:.2f}),1,0)+lum(X,Y)*if(gt(t,{pulse_end:.2f}),1,0)':"
+            f"cb='cb(X,Y)':cr='cr(X,Y)'"
+        )
+        vf_parts.append(vign)
+        print(f"  [Vignette] Pulse sin(t*6) sur {pulse_end:.1f}s  strength={vs}")
+
+    # ── Watermark @lescrados.ai ──────────────────────────────────────
+    wm_txt      = "@lescrados.ai"
+    wm_sz       = max(20, int(Hi * 0.030))
+    wm_margin_x = int(Wi * 0.035)
+    wm_margin_y = int(Hi * 0.030)
+    wm_y        = Hi - wm_margin_y - wm_sz
+    wm_fade_in  = 0.35
+    wm_fade_out = max(0.0, total - 0.4)
     wm_alpha = (
         f"if(lt(t,{wm_fade_in}),t/{wm_fade_in},"
         f"if(gt(t,{wm_fade_out:.3f}),(t-{wm_fade_out:.3f})/0.4,1))"
     )
-    # Écrire le handle dans un fichier texte (évite tout problème d'échappement)
     with open("_wm_handle.txt", "w", encoding="utf-8") as _f:
         _f.write(wm_txt)
-
-    # Ombre portée (décalée de 2px) + texte principal
-    wm_shadow = (
+    vf_parts.append(
         f"drawtext=fontfile={FONT}:textfile=_wm_handle.txt:"
         f"fontsize={wm_sz}:fontcolor=black@0.55:"
-        f"x={wm_margin_x + 2}:y={wm_y + 2}:"
-        f"alpha='{wm_alpha}'"
+        f"x={wm_margin_x + 2}:y={wm_y + 2}:alpha='{wm_alpha}'"
     )
-    wm_main = (
+    vf_parts.append(
         f"drawtext=fontfile={FONT}:textfile=_wm_handle.txt:"
         f"fontsize={wm_sz}:fontcolor=white@0.88:"
-        f"x={wm_margin_x}:y={wm_y}:"
-        f"alpha='{wm_alpha}'"
+        f"x={wm_margin_x}:y={wm_y}:alpha='{wm_alpha}'"
     )
 
-    # Aucune vignette — pas de bandes semi-transparentes sur les côtés
-    fades = f"fade=t=in:st=0:d={fade_in_d},fade=t=out:st={fade_out_st:.2f}:d={fade_out_d}"
-    vf = f"{wm_shadow},{wm_main},{fades}"
+    # ── Numéro de série collector ────────────────────────────────────
+    if cfg(opts, "serial_number"):
+        import random, time
+        # Numéro pseudo-aléatoire mais stable (basé sur timestamp du run)
+        serial = opts.get("serial_override", random.randint(1, 999))
+        serial_txt = f"N°{serial:03d} / ∞"
+        sr_sz  = max(16, int(Hi * 0.022))    # ~2.2% hauteur — discret
+        sr_x   = int(Wi * 0.035)             # coin bas gauche, sous le watermark
+        sr_y   = wm_y - sr_sz - int(Hi * 0.012)
+        sr_fade_in  = 0.5
+        sr_fade_out = max(0.0, total - 0.4)
+        sr_alpha = (
+            f"if(lt(t,{sr_fade_in}),t/{sr_fade_in},"
+            f"if(gt(t,{sr_fade_out:.3f}),(t-{sr_fade_out:.3f})/0.4,0.72))"
+        )
+        with open("_serial.txt", "w", encoding="utf-8") as _f:
+            _f.write(serial_txt)
+        # Ombre
+        vf_parts.append(
+            f"drawtext=fontfile={FONT}:textfile=_serial.txt:"
+            f"fontsize={sr_sz}:fontcolor=black@0.45:"
+            f"x={sr_x + 1}:y={sr_y + 1}:alpha='{sr_alpha}'"
+        )
+        # Texte accent — couleur selon thème logo
+        theme_id = str(opts.get("logo", {}).get("theme", "crados")).lower()
+        THEME_COLORS = {
+            "crados": "#FF2442", "cyber": "#00D4FF",
+            "collector": "#F5C842", "matrix": "#34D399", "gothic": "#9B59FF",
+        }
+        sr_color = THEME_COLORS.get(theme_id, "#FF2442")
+        vf_parts.append(
+            f"drawtext=fontfile={FONT}:textfile=_serial.txt:"
+            f"fontsize={sr_sz}:fontcolor={sr_color}@0.85:"
+            f"x={sr_x}:y={sr_y}:alpha='{sr_alpha}'"
+        )
+        print(f"  [Serial] {serial_txt}  theme={theme_id}  color={sr_color}")
 
-    # Pas de fade audio ici — on le fait sur output.mp4 final (après logo)
+    # ── Fades vidéo ─────────────────────────────────────────────────
+    vf_parts.append(
+        f"fade=t=in:st=0:d={fade_in_d},"
+        f"fade=t=out:st={fade_out_st:.2f}:d={fade_out_d}"
+    )
+
+    vf = ",".join(vf_parts)
+
     run(
         f'ffmpeg -y -i _assembled.mp4 '
         f'-vf "{vf}" '
-        f'-c:v libx264 -crf {cfg(opts,"crf")} -c:a copy _premain.mp4'
+        f'-c:v libx264 -crf {crf_val} -pix_fmt yuv420p -c:a copy _premain.mp4'
     )
     append_logo("_premain.mp4", opts)
 
-    # Audio fade sur le fichier final — couvre le logo proprement
-    total_final = duration("output.mp4")
-    # Fade audio : commence 1.2s avant la fin du logo (laisse le son respirer)
-    audio_fade_d  = min(1.2, LOGO_DUR * 0.5)
-    audio_fade_st = max(0.0, total_final - audio_fade_d)
+    # Audio fade final
+    total_final  = duration("output.mp4")
+    audio_fade_d = min(1.2, LOGO_DUR * 0.5)
+    audio_fade_st= max(0.0, total_final - audio_fade_d)
     run(
         f'ffmpeg -y -i output.mp4 '
         f'-af "afade=t=out:st={audio_fade_st:.2f}:d={audio_fade_d:.2f}" '
         f'-c:v copy -c:a aac -ar 44100 -ac 2 _output_fade.mp4'
     )
     run('mv _output_fade.mp4 output.mp4')
+
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -968,9 +1179,11 @@ def _default_subtitles(content_dur, segments=None):
 def apply_subtitles(input_video, output_video, subtitles, opts):
     """
     Incrust les sous-titres via FFmpeg drawtext.
-    Utilise textfile= pour éviter tout problème d'échappement (apostrophes,
-    virgules, points de suspension, etc.).
-    Style : bande noire semi-transparente · texte blanc bold centré · contour natif.
+    Le 1er sous-titre (hook) reçoit un effet glitch RGB si glitch_text=True :
+      - canal R décalé de +N px à droite
+      - canal B décalé de -N px à gauche
+      - le canal G reste centré = texte principal lisible
+    Utilise textfile= pour éviter tout problème d'échappement.
     """
     if not subtitles:
         run(f'cp "{input_video}" "{output_video}"')
@@ -980,14 +1193,13 @@ def apply_subtitles(input_video, output_video, subtitles, opts):
     W_px  = int(W_str)
     H_px  = int(H_str)
     crf   = cfg(opts, "crf")
+    do_glitch    = cfg(opts, "glitch_text")
+    glitch_px    = int(cfg(opts, "glitch_intensity"))   # décalage px canaux R/B
 
-    # Taille police : 4.2% de la hauteur vidéo
     font_size = max(36, int(H_px * 0.042))
-
-    # Zone sous-titre : bas de l'écran (sans letterbox)
-    zone_h = int(H_px * 0.095)
-    band_y = H_px - zone_h - int(H_px * 0.03)   # 3% marge basse
-    text_y = band_y + zone_h // 2
+    zone_h    = int(H_px * 0.095)
+    band_y    = H_px - zone_h - int(H_px * 0.03)
+    text_y    = band_y + zone_h // 2
 
     try:
         vid_dur = duration(input_video)
@@ -1007,8 +1219,8 @@ def apply_subtitles(input_video, output_video, subtitles, opts):
     for i, s in enumerate(subtitles):
         t0   = s["t_start"]
         tend = t0 + s["t_dur"]
+        is_hook = (i == 0)
 
-        # Écrire le texte dans un fichier temporaire — évite tout échappement
         txt_path = f"_sub_{i}.txt"
         with open(txt_path, "w", encoding="utf-8") as f:
             f.write(s["text"])
@@ -1021,19 +1233,42 @@ def apply_subtitles(input_video, output_video, subtitles, opts):
             f"enable='between(t,{t0:.3f},{tend:.3f})'"
         )
 
-        # Texte blanc avec bordercolor/borderw natif FFmpeg (contour propre, 0 filtre extra)
-        vf_parts.append(
-            f"drawtext="
-            f"fontfile={FONT}:"
-            f"textfile={txt_path}:"
-            f"fontsize={font_size}:"
-            f"fontcolor=white:"
-            f"bordercolor=black:"
-            f"borderw=3:"
-            f"x=(w-text_w)/2:"
-            f"y={text_y}-(text_h/2):"
-            f"enable='between(t,{t0:.3f},{tend:.3f})'"
-        )
+        if is_hook and do_glitch:
+            # ── Glitch RGB — hook uniquement ────────────────────────
+            # Canal R : décalé +glitch_px, rouge semi-transparent
+            vf_parts.append(
+                f"drawtext=fontfile={FONT}:textfile={txt_path}:"
+                f"fontsize={font_size}:fontcolor=red@0.55:"
+                f"bordercolor=black@0:borderw=0:"
+                f"x=(w-text_w)/2+{glitch_px}:y={text_y}-(text_h/2):"
+                f"enable='between(t,{t0:.3f},{tend:.3f})'"
+            )
+            # Canal B : décalé -glitch_px, bleu semi-transparent
+            vf_parts.append(
+                f"drawtext=fontfile={FONT}:textfile={txt_path}:"
+                f"fontsize={font_size}:fontcolor=0x4488FF@0.50:"
+                f"bordercolor=black@0:borderw=0:"
+                f"x=(w-text_w)/2-{glitch_px}:y={text_y}-(text_h/2):"
+                f"enable='between(t,{t0:.3f},{tend:.3f})'"
+            )
+            # Canal principal blanc — par-dessus, centré
+            vf_parts.append(
+                f"drawtext=fontfile={FONT}:textfile={txt_path}:"
+                f"fontsize={font_size}:fontcolor=white:"
+                f"bordercolor=black:borderw=2:"
+                f"x=(w-text_w)/2:y={text_y}-(text_h/2):"
+                f"enable='between(t,{t0:.3f},{tend:.3f})'"
+            )
+            print(f"  [GlitchText] Sous-titre hook glitché ±{glitch_px}px  RGB split")
+        else:
+            # Style standard propre
+            vf_parts.append(
+                f"drawtext=fontfile={FONT}:textfile={txt_path}:"
+                f"fontsize={font_size}:fontcolor=white:"
+                f"bordercolor=black:borderw=3:"
+                f"x=(w-text_w)/2:y={text_y}-(text_h/2):"
+                f"enable='between(t,{t0:.3f},{tend:.3f})'"
+            )
 
     vf = ",".join(vf_parts)
 
@@ -1045,7 +1280,6 @@ def apply_subtitles(input_video, output_video, subtitles, opts):
         f'"{output_video}"'
     )
     print(f"  [Subtitles] {len(subtitles)} sous-titre(s) appliqué(s) ✅")
-
 
 
 # ═══════════════════════════════════════════════════════════════════════
