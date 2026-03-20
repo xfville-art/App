@@ -1092,56 +1092,20 @@ def start():
 
         map_v = f"-map 0:{h264_idx}" if h264_idx is not None else "-map 0:v:0"
 
-        # ── Auto-crop + scale-fill 9:16 ──────────────────────────────
-        # 1. Détecte les bandes source via cropdetect (seuil élevé pour attraper
-        #    les fonds gris/beige de carte Crados, pas seulement le noir pur)
-        # 2. Crop pour les retirer
-        # 3. Scale-fill : surscale puis crop centré → plein écran sans bandes
-        def get_crop(path, map_flag):
-            """Retourne 'w:h:x:y' ou None si pas de bandes détectées."""
-            try:
-                # Essai 1 : seuil 64 (attrape gris, beige, bords de carte)
-                # Essai 2 : seuil 24 (fallback conservateur)
-                for limit in (64, 24):
-                    r2 = subprocess.run(
-                        f'ffmpeg -ss 0.5 -t 3 -i "{path}" {map_flag} '
-                        f'-vf "cropdetect=limit={limit}:round=2:reset=0" -f null - 2>&1',
-                        shell=True, capture_output=True, text=True
-                    )
-                    out = r2.stdout + r2.stderr
-                    crops = []
-                    for line in out.splitlines():
-                        if "crop=" in line and "Parsed_cropdetect" in line:
-                            c = line.split("crop=")[-1].strip().split()[0]
-                            crops.append(c)
-                    if not crops:
-                        continue
-                    cw, ch, cx, cy = map(int, crops[-1].split(":"))
-                    src_probe = ffprobe(path)
-                    vs = [s for s in src_probe.get("streams", [])
-                          if s.get("codec_type") == "video"]
-                    if not vs:
-                        return None
-                    sw = int(vs[0].get("width", cw))
-                    sh = int(vs[0].get("height", ch))
-                    # Appliquer si le crop retire au moins 1% sur un axe
-                    if abs(cw - sw) >= sw * 0.01 or abs(ch - sh) >= sh * 0.01:
-                        return f"{cw}:{ch}:{cx}:{cy}"
-                return None
-            except Exception:
-                return None
+        # ── Scale-fill 9:16 avec overscan ────────────────────────────
+        # Stratégie : scale à 108% puis crop centré à la résolution cible.
+        # L'overscan de 8% élimine systématiquement les bords de carte Crados
+        # (cadre gris/beige, vignette source) quelle que soit la source,
+        # sans dépendre d'un cropdetect fragile sur des couleurs non-noires.
+        OVERSCAN = 1.08
+        OW = int(int(W) * OVERSCAN)
+        OH = int(int(H) * OVERSCAN)
+        # S'assurer que OW et OH sont pairs (exigence libx264)
+        OW = OW + (OW % 2)
+        OH = OH + (OH % 2)
 
-        crop_param = get_crop(raw, map_v)
-        if crop_param:
-            print(f"  Clip {i} : autocrop détecté → crop={crop_param}")
-            crop_filter = f"crop={crop_param},"
-        else:
-            crop_filter = ""
-
-        # scale=increase puis crop centré → plein écran 9:16, zéro bande
         vf_scale = (
-            f"{crop_filter}"
-            f"scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"scale={OW}:{OH}:force_original_aspect_ratio=increase:flags=lanczos,"
             f"crop={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
             f"setsar=1,fps={fps}"
         )
