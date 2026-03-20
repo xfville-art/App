@@ -527,35 +527,8 @@ def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts, role="core"):
     # Grade BD renforcé — saturation/contraste Crados
     grade = f"eq=saturation={sat}:brightness={bri}:contrast={cont}"
 
-    # Zoom progressif adaptatif selon le rôle
-    # zoompan = lent (1 frame/output) — on utilise crop+scale pour la perf
-    # push-in : zoom de 1.0 → zoom_max sur toute la durée du segment
-    if role == "punch" and do_pzoom:
-        # Zoom-in explosif sur la punchline
-        zmax = zoom_punch
-        # scale légèrement oversized puis crop centré progressif
-        scale_w = int(int(W) * zmax)
-        scale_h = int(int(H) * zmax)
-        # Expression linéaire : crop_w va de scale_w*1.0 → int(W) sur nb_frames
-        # On utilise zoompan natif FFmpeg — plus simple et stable
-        zoom_filter = (
-            f"zoompan=z='min(zoom+{(zmax-1.0)/int(fps/1.2):.6f},{zmax})'"
-            f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-            f":d=1:s={W}x{H}"
-        )
-        vf = f"fps={fps},{grade},{zoom_filter}"
-    elif role == "hook" and do_hzoom:
-        # Léger push-in sur le hook — plus subtil
-        zmax = zoom_hook
-        zoom_filter = (
-            f"zoompan=z='min(zoom+{(zmax-1.0)/int(fps/1.5):.6f},{zmax})'"
-            f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-            f":d=1:s={W}x{H}"
-        )
-        vf = f"fps={fps},{grade},{zoom_filter}"
-    else:
-        # Core / pas de zoom : grade seul
-        vf = f"fps={fps},{grade}"
+    # Pas de zoom — grade seul (punch_zoom et hook_zoom désactivés)
+    vf = f"fps={fps},{grade}"
 
     # ── Extraction ────────────────────────────────────────────────────
     ss_flag = f"-ss {in_pt:.3f}" if in_pt > 0.001 else ""
