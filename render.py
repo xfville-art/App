@@ -1092,15 +1092,96 @@ def start():
 
         map_v = f"-map 0:{h264_idx}" if h264_idx is not None else "-map 0:v:0"
 
-        # ── Scale-fill 9:16 plein écran ──────────────────────────────
-        # 1. Overscan 15% sur les dimensions source (iw/ih) → bords sortent du cadre
-        # 2. scale=W:H exact → remplit tout le canvas 9:16 sans bandes
-        # 3. crop=W:H centré → sécurité pixel pair
-        # Pas de force_original_aspect_ratio : on veut remplir, pas letterboxer.
+        # ── Auto-crop bords carte + scale 9:16 plein écran ─────────
+        # Détecte les bandes grises/beiges de la carte Crados en analysant
+        # les colonnes/lignes de bord pixel par pixel via ffprobe + numpy.
+        # Puis crop précis + scale exacte W:H → zéro bande garantie.
+        def detect_card_borders(path):
+            """
+            Retourne (left, right, top, bottom) en pixels — marges à couper.
+            Compare les colonnes/lignes de bord avec le centre de l'image.
+            Tolère les fonds gris, beige, blanc et toute couleur non-contenu.
+            """
+            try:
+                import tempfile, os
+                tmp = tempfile.mktemp(suffix='.png')
+                # Extraire 1 frame au milieu du clip
+                mid = max(duration(path) / 2, 0.5)
+                r2 = subprocess.run(
+                    f'ffmpeg -ss {mid:.2f} -i "{path}" -vframes 1 "{tmp}" -y 2>/dev/null',
+                    shell=True, capture_output=True
+                )
+                if not os.path.exists(tmp):
+                    return 0, 0, 0, 0
+                from PIL import Image as PILImage
+                import numpy as _np
+                img = _np.array(PILImage.open(tmp).convert('RGB'))
+                os.unlink(tmp)
+                H_img, W_img = img.shape[:2]
+
+                def find_border(axis, from_end=False):
+                    """Trouve la largeur de bande uniforme sur un bord."""
+                    # Référence : colonne/ligne du bord
+                    if axis == 'left':
+                        ref = img[:, 0, :].astype(float)
+                        seq = range(0, min(80, W_img))
+                        def get(i): return img[:, i, :].astype(float)
+                    elif axis == 'right':
+                        ref = img[:, W_img-1, :].astype(float)
+                        seq = range(W_img-1, max(W_img-80, 0), -1)
+                        def get(i): return img[:, i, :].astype(float)
+                    elif axis == 'top':
+                        ref = img[0, :, :].astype(float)
+                        seq = range(0, min(80, H_img))
+                        def get(i): return img[i, :, :].astype(float)
+                    else:  # bottom
+                        ref = img[H_img-1, :, :].astype(float)
+                        seq = range(H_img-1, max(H_img-80, 0), -1)
+                        def get(i): return img[i, :, :].astype(float)
+
+                    border = 0
+                    for idx in seq:
+                        diff = _np.abs(get(idx) - ref).mean()
+                        if diff > 12:
+                            break
+                        border += 1
+                    return max(0, border - 2)  # -2 px de marge sécurité
+
+                left   = find_border('left')
+                right  = find_border('right')
+                top    = find_border('top')
+                bottom = find_border('bottom')
+                return left, right, top, bottom
+            except Exception as _e:
+                print(f"      detect_card_borders: {_e}")
+                return 0, 0, 0, 0
+
+        bl, br, bt, bb = detect_card_borders(raw)
+        print(f"  Clip {i} : bords détectés L={bl} R={br} T={bt} B={bb}")
+
+        # Construire le filtre crop si des bandes sont trouvées
+        src_info = ffprobe(raw)
+        src_vs = [s for s in src_info.get('streams', []) if s.get('codec_type') == 'video']
+        src_w = int(src_vs[0].get('width', int(W))) if src_vs else int(W)
+        src_h = int(src_vs[0].get('height', int(H))) if src_vs else int(H)
+
+        cw = src_w - bl - br
+        ch = src_h - bt - bb
+        # Forcer pairs
+        cw = cw - (cw % 2)
+        ch = ch - (ch % 2)
+        cx = bl
+        cy = bt
+
+        if bl + br + bt + bb > 4:
+            crop_filter = f"crop={cw}:{ch}:{cx}:{cy},"
+            print(f"      crop appliqué : {cw}x{ch}+{cx}+{cy}")
+        else:
+            crop_filter = ""
+
         vf_scale = (
-            f"scale=iw*1.15:ih*1.15:flags=lanczos,"
+            f"{crop_filter}"
             f"scale={W}:{H}:flags=lanczos,"
-            f"crop={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
             f"setsar=1,fps={fps}"
         )
 
