@@ -42,10 +42,10 @@ DEFAULTS = {
     "cinema_lb_h":     80,
 
     # ── Dialogue Cut Engine ─────────────────────────────────────────
-    "dialogue_cut":       False,
-    "dialogue_noise_db":  -32,
-    "dialogue_min_pause": 0.06,
-    "dialogue_tolerance": 2.5,
+    "dialogue_cut":       True,    # ON par défaut (v14)
+    "dialogue_noise_db":  -35,     # seuil silence — -35dB capte mieux les pauses courtes
+    "dialogue_min_pause": 0.08,    # pause min 80ms (phrase complète vs souffle)
+    "dialogue_tolerance": 3.0,     # fenêtre de snap ±3s autour du cut cible
     "dialogue_in_snap":   False,
     "dialogue_xfade_min": 0.15,
     "dialogue_xfade_max": 0.35,
@@ -565,7 +565,38 @@ def build_cinema_segment(src, seg_out, target_dur, kb_zoom, opts, role="core"):
 
     actual = max(actual, 1.0)  # garde-fou absolu
 
-    # ── Beat sync : détection énergie audio ─────────────────────────
+    # ── Phrase-aware cut OUT (v14) ───────────────────────────────────
+    # Pour TOUS les rôles : si le clip a de l'audio, on snap le point de
+    # coupe OUT sur la fin du silence inter-phrases le plus proche.
+    # Évite de couper en plein mot / milieu de phrase.
+    # Tolérance : ±dialogue_tolerance secondes autour du point de coupe cible.
+    # Si aucun silence trouvé dans la fenêtre → fallback sur actual (inchangé).
+    if has_audio(src) and actual < src_dur - 0.1:
+        # Ne snap que si on coupe AVANT la fin naturelle du clip
+        _noise_db  = cfg(opts, "dialogue_noise_db")   # -32
+        _min_pause = cfg(opts, "dialogue_min_pause")   # 0.06s
+        _tolerance = cfg(opts, "dialogue_tolerance")   # 2.5s
+        try:
+            silences = detect_silences(src, noise_db=_noise_db, min_dur=_min_pause)
+            if silences:
+                snapped, snap_lbl = find_cut_out(
+                    silences,
+                    target   = in_pt + actual,
+                    clip_max = src_dur,
+                    tolerance= _tolerance
+                )
+                snapped_rel = snapped - in_pt
+                if abs(snapped_rel - actual) > 0.05:
+                    print(f"      phrase-snap : {actual:.3f}s → {snapped_rel:.3f}s  [{snap_lbl}]")
+                    actual = max(snapped_rel, 1.0)
+                else:
+                    print(f"      phrase-snap : déjà sur silence ({actual:.3f}s)")
+            else:
+                print(f"      phrase-snap : pas de silence détecté — cut brut conservé")
+        except Exception as _e:
+            print(f"      phrase-snap : skip ({_e})")
+
+
     # Analyse le volume RMS pour détecter les pics d'énergie (beats).
     # Utilisé pour informer le LLM et ajuster in_pt si beat_sync actif.
     beat_offset = 0.0

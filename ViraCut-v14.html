@@ -1268,13 +1268,26 @@ input[type=password]::placeholder{color:var(--t3)}
 <script>
 /* ── CRASH VISIBLE AU LIEU D'ÉCRAN NOIR ── */
 window.onerror=function(m,s,l,c,e){
-  document.body.style.cssText='background:#0a0a0f;color:#ff3b5c;padding:20px;font-family:monospace;font-size:13px';
-  document.body.innerHTML='<b>ERR L'+l+'</b><br>'+m+'<br><br>'+(e?e.stack:'');
-  return false;
+  // Ne pas écraser le DOM — juste logger en console
+  console.error('[ViraCut] ERR L'+l+' : '+m, e||'');
+  return true; // supprime l'affichage navigateur natif
 };
 window.addEventListener('unhandledrejection',function(e){
-  document.body.style.cssText='background:#0a0a0f;color:#ff3b5c;padding:20px;font-family:monospace;font-size:13px';
-  document.body.innerHTML='<b>PROMISE REJECTION</b><br>'+(e.reason?e.reason.toString():'unknown');
+  // Reject non géré : toast discret, jamais écraser le DOM
+  const reason=e.reason?e.reason.toString():'unknown';
+  console.warn('[ViraCut] Unhandled rejection:', reason);
+  // Toast 4s non-invasif
+  try{
+    let t=document.getElementById('_viraToast');
+    if(!t){t=document.createElement('div');t.id='_viraToast';
+      t.style.cssText='position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a1a2e;color:#ff3b5c;border:1px solid #ff3b5c44;border-radius:10px;padding:10px 18px;font-size:12px;font-family:monospace;z-index:9999;max-width:90vw;word-break:break-word;opacity:0;transition:opacity .3s';
+      document.body.appendChild(t);}
+    t.textContent=reason.slice(0,120);
+    t.style.opacity='1';
+    clearTimeout(t._tid);
+    t._tid=setTimeout(()=>{t.style.opacity='0';},4000);
+  }catch(_){}
+  e.preventDefault(); // empêche la console navigateur d'afficher l'erreur
 });
 document.addEventListener('DOMContentLoaded',function(){
 
@@ -1883,6 +1896,7 @@ async function fetchVideoBlob(onProgress){
 
 async function doShare(){
   const btn=document.getElementById('dlShareBtn');
+  if(!btn)return;
   const orig=btn.innerHTML;
   btn.innerHTML='<span class="dl-spinner"></span><span>Téléchargement…</span>';
   btn.disabled=true;
@@ -1910,6 +1924,7 @@ async function doShare(){
 async function doDirectDownload(){
   const btn=document.getElementById('dlDirectBtn');
   const label=document.getElementById('dlDirectLabel');
+  if(!btn)return;
   const orig=label?label.textContent:'Télécharger';
   if(label)label.textContent='Téléchargement…';
   btn.disabled=true;
