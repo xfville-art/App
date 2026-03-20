@@ -1021,34 +1021,27 @@ def _extract_json(text):
 
 def hook_text_generation(raw_paths, opts):
     """
-    Génère un texte de hook percutant via Claude Vision (ANTHROPIC_API_KEY).
-    Extrait une frame JPEG du clip hook (index 0), l'envoie à claude-haiku-4-5
-    avec un prompt Crados, récupère le meilleur hook et l'injecte dans opts.
-    Ne fait rien si custom_hook déjà fourni par l'utilisateur ou si pas de clé.
+    Génère un texte de hook percutant via Vision IA.
+    Priorité : Claude Haiku (ANTHROPIC_API_KEY) → Groq Vision (GROQ_API_KEY) → skip
+    Extrait une frame JPEG du clip hook, l'envoie à l'API disponible,
+    injecte le résultat dans opts["custom_hook"].
+    Ne fait rien si custom_hook déjà fourni par l'utilisateur.
     """
-    # Ne pas écraser un hook manuel saisi dans l'app
     if opts.get("custom_hook", "").strip():
         print("  [HookText] Hook manuel détecté — génération IA ignorée")
-        return
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        print("  [HookText] ANTHROPIC_API_KEY absent — hook ignoré")
         return
 
     if not raw_paths:
         return
 
-    hook_src = raw_paths[0]   # toujours le clip hook (index 0)
-
-    print("\n  [HookText] Génération hook via Claude Vision…")
+    hook_src = raw_paths[0]
 
     # ── Extraire 1 frame JPEG au 1/4 du clip hook ─────────────────
     try:
-        hook_dur = duration(hook_src)
-        seek_t   = max(0.3, hook_dur * 0.25)
+        hook_dur   = duration(hook_src)
+        seek_t     = max(0.3, hook_dur * 0.25)
         frame_path = "_hook_frame.jpg"
-        r = subprocess.run(
+        subprocess.run(
             f'ffmpeg -y -ss {seek_t:.2f} -i "{hook_src}" '
             f'-vframes 1 -vf "scale=512:-2" -q:v 3 "{frame_path}" 2>/dev/null',
             shell=True, capture_output=True
@@ -1063,13 +1056,12 @@ def hook_text_generation(raw_paths, opts):
         return
 
     # ── Nom du personnage depuis opts.logo ────────────────────────
-    logo = opts.get("logo", {})
-    l1   = str(logo.get("l1", "")).strip()
-    l2   = str(logo.get("l2", "")).strip()
-    perso_parts = [p for p in [l1, l2] if p and p.upper() not in ("LES","THE","GPK","CRADOS","")]
-    perso = " ".join(perso_parts) if perso_parts else "un personnage Les Crados"
+    logo  = opts.get("logo", {})
+    l1    = str(logo.get("l1", "")).strip()
+    l2    = str(logo.get("l2", "")).strip()
+    parts = [p for p in [l1, l2] if p and p.upper() not in ("LES","THE","GPK","CRADOS","")]
+    perso = " ".join(parts) if parts else "un personnage Les Crados"
 
-    # ── Appel Claude Haiku Vision ─────────────────────────────────
     prompt_text = (
         f"Tu es expert TikTok pour @lescrados.ai (Garbage Pail Kids français).\n"
         f"Regarde cette image extraite d'une vidéo du personnage \"{perso}\".\n\n"
@@ -1084,47 +1076,94 @@ def hook_text_generation(raw_paths, opts):
         f"Réponds UNIQUEMENT avec le texte du hook, rien d'autre."
     )
 
-    payload = json.dumps({
-        "model":      "claude-haiku-4-5-20251001",
-        "max_tokens": 60,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "image",  "source": {"type": "base64", "media_type": "image/jpeg", "data": frame_b64}},
-                {"type": "text",   "text": prompt_text}
-            ]
-        }]
-    }).encode()
+    def _clean_hook(text):
+        text = text.strip().strip('"').strip("'")
+        text = text.split("\n")[0].strip()
+        text = text.replace("#", "").strip()
+        return text[:60]
 
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
-        data    = payload,
-        headers = {
-            "Content-Type":      "application/json",
-            "x-api-key":         api_key,
-            "anthropic-version": "2023-06-01",
-        },
-        method = "POST"
-    )
+    # ══ Tentative 1 : Claude Haiku (Anthropic) ═══════════════════
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if anthropic_key:
+        print("\n  [HookText] Tentative Claude Haiku…")
+        try:
+            payload = json.dumps({
+                "model":      "claude-haiku-4-5-20251001",
+                "max_tokens": 60,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image",  "source": {"type": "base64", "media_type": "image/jpeg", "data": frame_b64}},
+                        {"type": "text",   "text": prompt_text}
+                    ]
+                }]
+            }).encode()
+            req = urllib.request.Request(
+                "https://api.anthropic.com/v1/messages",
+                data    = payload,
+                headers = {
+                    "Content-Type":      "application/json",
+                    "x-api-key":         anthropic_key,
+                    "anthropic-version": "2023-06-01",
+                },
+                method = "POST"
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                body = json.loads(resp.read().decode())
+            hook_text = _clean_hook(body["content"][0]["text"])
+            if hook_text:
+                opts["custom_hook"] = hook_text
+                print(f"  [HookText] ✅ Claude Haiku : \"{hook_text}\"")
+                return
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode()[:300]
+            print(f"  [HookText] Claude HTTP {e.code} — fallback Groq : {err_body[:120]}")
+        except Exception as e:
+            print(f"  [HookText] Claude erreur — fallback Groq : {e}")
 
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            body = json.loads(resp.read().decode())
-        hook_text = body["content"][0]["text"].strip().strip('"').strip("'")
-        # Nettoyer : supprimer guillemets, hashtags, retours à la ligne
-        hook_text = hook_text.split("\n")[0].strip()
-        hook_text = hook_text.replace("#", "").strip()
-        # Tronquer à 60 chars max (sécurité FFmpeg)
-        hook_text = hook_text[:60]
-        if hook_text:
-            opts["custom_hook"] = hook_text
-            print(f"  [HookText] ✅ Hook généré : \"{hook_text}\"")
-        else:
-            print("  [HookText] Réponse vide")
-    except urllib.error.HTTPError as e:
-        print(f"  [HookText] HTTP {e.code} : {e.read().decode()[:200]}")
-    except Exception as e:
-        print(f"  [HookText] Erreur : {e}")
+    # ══ Tentative 2 : Groq Vision (llama-4-scout) ════════════════
+    groq_key = os.environ.get("GROQ_API_KEY", "")
+    if groq_key:
+        print("  [HookText] Tentative Groq Vision (llama-4-scout)…")
+        try:
+            payload = json.dumps({
+                "model":       "meta-llama/llama-4-scout-17b-16e-instruct",
+                "max_tokens":  60,
+                "temperature": 0.4,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {
+                            "url": f"data:image/jpeg;base64,{frame_b64}"
+                        }},
+                        {"type": "text", "text": prompt_text}
+                    ]
+                }]
+            }).encode()
+            req = urllib.request.Request(
+                "https://api.groq.com/openai/v1/chat/completions",
+                data    = payload,
+                headers = {
+                    "Content-Type":  "application/json",
+                    "Authorization": f"Bearer {groq_key}",
+                },
+                method = "POST"
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                body = json.loads(resp.read().decode())
+            hook_text = _clean_hook(body["choices"][0]["message"]["content"])
+            if hook_text:
+                opts["custom_hook"] = hook_text
+                print(f"  [HookText] ✅ Groq Vision : \"{hook_text}\"")
+                return
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode()[:300]
+            print(f"  [HookText] Groq HTTP {e.code} : {err_body[:120]}")
+        except Exception as e:
+            print(f"  [HookText] Groq erreur : {e}")
+
+    print("  [HookText] Tous les providers ont échoué — pas de hook textuel")
+
 
 
 def viralite_analysis(clips_raw, opts, raw_paths):
