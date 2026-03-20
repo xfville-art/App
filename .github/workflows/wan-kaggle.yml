@@ -36,116 +36,112 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Kaggle CLI
-        run: pip install kaggle
+      - name: Install deps
+        run: pip install requests
 
-      - name: Configure Kaggle credentials
+      - name: Push kernel via Kaggle REST API v1
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY:      ${{ secrets.KAGGLE_KEY }}
-        run: |
-          mkdir -p ~/.kaggle
-          echo '{"username":"'"$KAGGLE_USERNAME"'","key":"'"$KAGGLE_KEY"'"}' > ~/.kaggle/kaggle.json
-          chmod 600 ~/.kaggle/kaggle.json
-
-      - name: Prepare & push notebook to Kaggle
-        env:
-          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           GH_TOKEN:        ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO:         ${{ github.repository }}
           PROMPT:          ${{ inputs.prompt }}
           IMAGE_BASE64:    ${{ inputs.image_base64 }}
           DURATION:        ${{ inputs.duration }}
           ASPECT_RATIO:    ${{ inputs.aspect_ratio }}
-          GH_REPO:         ${{ github.repository }}
         run: |
-          python3 << 'PYEOF'
-          import os, json, subprocess, base64, time
+          python3 - << 'PYEOF'
+          import os, json, requests, time
 
-          KAGGLE_USER = os.environ['KAGGLE_USERNAME']
+          KG_USER  = os.environ['KAGGLE_USERNAME']
+          KG_KEY   = os.environ['KAGGLE_KEY']
+          GH_TOKEN = os.environ['GH_TOKEN']
+          GH_REPO  = os.environ['GH_REPO']
+          PROMPT   = os.environ['PROMPT']
+          IMG_B64  = os.environ['IMAGE_BASE64']
+          DURATION = os.environ.get('DURATION', '5')
+          RATIO    = os.environ.get('ASPECT_RATIO', '9:16')
+          RUN_ID   = str(int(time.time()))
+
+          KG_AUTH = (KG_USER, KG_KEY)
+          KG_BASE = 'https://www.kaggle.com/api/v1'
           KERNEL_SLUG = 'viravid-i2v'
-          NB_PATH     = '.github/workflows/wan-i2v.ipynb'
-          RUN_ID      = str(int(time.time()))
+          # title doit slugifier exactement vers KERNEL_SLUG
+          # slug = lower + replace spaces with dashes
+          KERNEL_TITLE = 'viravid i2v'
 
-          # Injecter les env vars dans le notebook via une cellule d'init
-          with open(NB_PATH) as f:
+          # Lire le notebook
+          nb_path = '.github/workflows/wan-i2v.ipynb'
+          with open(nb_path) as f:
               nb = json.load(f)
 
-          inject_cell = {
+          # Injecter les paramètres en première cellule
+          inject = {
               "cell_type": "code",
               "execution_count": None,
               "metadata": {},
               "outputs": [],
               "source": [
                   "import os\n",
-                  f"os.environ['PROMPT']        = {json.dumps(os.environ['PROMPT'])}\n",
-                  f"os.environ['IMAGE_BASE64']  = {json.dumps(os.environ['IMAGE_BASE64'])}\n",
-                  f"os.environ['DURATION']      = {json.dumps(os.environ['DURATION'])}\n",
-                  f"os.environ['ASPECT_RATIO']  = {json.dumps(os.environ['ASPECT_RATIO'])}\n",
-                  f"os.environ['GH_TOKEN']      = {json.dumps(os.environ['GH_TOKEN'])}\n",
-                  f"os.environ['GH_REPO']       = {json.dumps(os.environ['GH_REPO'])}\n",
-                  f"os.environ['RUN_ID']        = {json.dumps(RUN_ID)}\n",
-                  "print('✓ Env vars injectées')\n"
+                  f"os.environ['PROMPT']       = {json.dumps(PROMPT)}\n",
+                  f"os.environ['IMAGE_BASE64'] = {json.dumps(IMG_B64)}\n",
+                  f"os.environ['DURATION']     = {json.dumps(DURATION)}\n",
+                  f"os.environ['ASPECT_RATIO'] = {json.dumps(RATIO)}\n",
+                  f"os.environ['GH_TOKEN']     = {json.dumps(GH_TOKEN)}\n",
+                  f"os.environ['GH_REPO']      = {json.dumps(GH_REPO)}\n",
+                  f"os.environ['RUN_ID']       = {json.dumps(RUN_ID)}\n",
+                  "print('Env vars OK')\n"
               ]
           }
-          # Insérer en première cellule (avant les autres)
-          nb['cells'].insert(0, inject_cell)
+          nb['cells'].insert(0, inject)
 
-          patched_nb = f'/tmp/{KERNEL_SLUG}.ipynb'
-          with open(patched_nb, 'w') as f:
-              json.dump(nb, f)
-
-          # kernel-metadata.json pour push Kaggle
-          meta = {
-              "id": f"{KAGGLE_USER}/{KERNEL_SLUG}",
-              "title": "ViraCut i2v",
-              "code_file": f"{KERNEL_SLUG}.ipynb",
-              "language": "python",
-              "kernel_type": "notebook",
-              "is_private": True,
-              "enable_gpu": True,
-              "enable_internet": True,
-              "dataset_sources": [],
-              "competition_sources": [],
-              "kernel_sources": []
+          payload = {
+              "id":            f"{KG_USER}/{KERNEL_SLUG}",
+              "title":         KERNEL_TITLE,
+              "newTitle":      KERNEL_TITLE,
+              "language":      "python",
+              "kernelType":    "notebook",
+              "isPrivate":     True,
+              "enableGpu":     True,
+              "enableTpu":     False,
+              "enableInternet": True,
+              "datasetDataSources":     [],
+              "kernelDataSources":      [],
+              "competitionDataSources": [],
+              "categoryIds":            [],
+              "source":        json.dumps(nb),
           }
-          import shutil
-          tmpdir = f'/tmp/kaggle_push_{RUN_ID}'
-          os.makedirs(tmpdir, exist_ok=True)
-          shutil.copy(patched_nb, f'{tmpdir}/{KERNEL_SLUG}.ipynb')
-          with open(f'{tmpdir}/kernel-metadata.json', 'w') as f:
-              json.dump(meta, f)
 
-          # Push (crée ou met à jour le kernel)
-          result = subprocess.run(
-              ['kaggle', 'kernels', 'push', '-p', tmpdir],
-              capture_output=True, text=True
-          )
-          print(result.stdout)
-          if result.returncode != 0:
-              print('STDERR:', result.stderr)
-              raise SystemExit(1)
+          print(f'Push kernel {KG_USER}/{KERNEL_SLUG}...')
+          r = requests.post(f'{KG_BASE}/kernels/push', auth=KG_AUTH, json=payload, timeout=30)
+          print(f'Status: {r.status_code}  Body: {r.text[:300]}')
 
-          # Sauvegarder RUN_ID pour le step suivant
+          if r.status_code not in (200, 201):
+              raise SystemExit(f'Push échoué: {r.status_code} — {r.text[:200]}')
+
+          print(f'Kernel lancé — RUN_ID={RUN_ID}')
+
           with open('/tmp/run_id.txt', 'w') as f:
               f.write(RUN_ID)
-
-          print(f'✓ Kernel pushé — RUN_ID: {RUN_ID}')
           PYEOF
 
-      - name: Poll Kaggle kernel + wait for GitHub Release
+      - name: Poll kernel + attendre Release GitHub
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY:      ${{ secrets.KAGGLE_KEY }}
           GH_TOKEN:        ${{ secrets.GITHUB_TOKEN }}
           GH_REPO:         ${{ github.repository }}
         run: |
-          python3 << 'PYEOF'
-          import os, subprocess, json, time, requests
+          python3 - << 'PYEOF'
+          import os, requests, time
 
-          KAGGLE_USER = os.environ['KAGGLE_USERNAME']
+          KG_USER  = os.environ['KAGGLE_USERNAME']
+          KG_KEY   = os.environ['KAGGLE_KEY']
+          GH_TOKEN = os.environ['GH_TOKEN']
+          GH_REPO  = os.environ['GH_REPO']
+          KG_AUTH  = (KG_USER, KG_KEY)
+          KG_BASE  = 'https://www.kaggle.com/api/v1'
           KERNEL_SLUG = 'viravid-i2v'
-          GH_TOKEN    = os.environ['GH_TOKEN']
-          GH_REPO     = os.environ['GH_REPO']
 
           with open('/tmp/run_id.txt') as f:
               RUN_ID = f.read().strip()
@@ -156,62 +152,56 @@ jobs:
               'Accept': 'application/vnd.github.v3+json'
           }
 
-          print(f'⏳ Attente kernel Kaggle + Release GitHub (tag: {TAG})…')
-          max_wait = 1200  # 20 min
-          interval = 20
-          elapsed  = 0
+          print(f'Poll kernel + Release (tag: {TAG})...')
+          max_wait, interval, elapsed = 1200, 20, 0
 
           while elapsed < max_wait:
               time.sleep(interval)
               elapsed += interval
 
-              # Vérifier statut kernel Kaggle
-              r = subprocess.run(
-                  ['kaggle', 'kernels', 'status', f'{KAGGLE_USER}/{KERNEL_SLUG}'],
-                  capture_output=True, text=True
-              )
-              status_line = r.stdout.strip()
-              print(f'[{elapsed}s] Kaggle: {status_line}')
+              # Statut kernel
+              kr = requests.get(f'{KG_BASE}/kernels/{KG_USER}/{KERNEL_SLUG}',
+                                 auth=KG_AUTH, timeout=15)
+              if kr.status_code == 200:
+                  kd = kr.json()
+                  # Extraire le statut depuis la structure imbriquée
+                  lrv = kd.get('currentRunningVersion') or kd.get('lastRunningVersion') or {}
+                  if isinstance(lrv, dict):
+                      kstatus = lrv.get('status', kd.get('status', '?'))
+                  else:
+                      kstatus = str(lrv)
+                  print(f'[{elapsed}s] Kaggle: {kstatus}')
+                  if kstatus in ('error', 'cancelAcknowledged', 'cancelled'):
+                      log_r = requests.get(
+                          f'{KG_BASE}/kernels/{KG_USER}/{KERNEL_SLUG}/output',
+                          auth=KG_AUTH, timeout=15)
+                      print('Kaggle log:', log_r.text[:800])
+                      raise SystemExit('Kernel en erreur')
+              else:
+                  print(f'[{elapsed}s] Kaggle {kr.status_code}: {kr.text[:100]}')
 
-              if 'error' in status_line.lower():
-                  # Récupérer les logs pour debug
-                  log_r = subprocess.run(
-                      ['kaggle', 'kernels', 'output', f'{KAGGLE_USER}/{KERNEL_SLUG}', '-p', '/tmp/'],
-                      capture_output=True, text=True
-                  )
-                  print('Kaggle logs:', log_r.stdout[:500])
-                  raise SystemExit('Kernel Kaggle en erreur')
-
-              # Chercher la Release GitHub créée par le notebook
+              # Chercher la Release
               rel_r = requests.get(
                   f'https://api.github.com/repos/{GH_REPO}/releases/tags/{TAG}',
-                  headers=GH_HEADERS, timeout=10
-              )
-
+                  headers=GH_HEADERS, timeout=10)
               if rel_r.status_code == 200:
                   assets = rel_r.json().get('assets', [])
                   if assets:
                       dl_url = assets[0]['browser_download_url']
-                      print(f'✓ Release trouvée: {dl_url}')
-                      # Écrire l'URL en output pour l'app via job summary
-                      with open(os.environ.get('GITHUB_STEP_SUMMARY', '/dev/null'), 'a') as f:
-                          f.write(f'## ✅ Vidéo prête\n')
-                          f.write(f'**URL:** {dl_url}\n')
-                          f.write(f'**Tag:** `{TAG}`\n')
-                      # Aussi dans un artifact texte pour que l'app puisse le lire
+                      print(f'Video ready: {dl_url}')
                       with open('/tmp/video_url.txt', 'w') as f:
                           f.write(dl_url)
-                      print(f'VIRAVID_URL={dl_url}')
+                      summary = os.environ.get('GITHUB_STEP_SUMMARY', '/dev/null')
+                      with open(summary, 'a') as f:
+                          f.write(f'## Video ready\n**URL:** {dl_url}\n**Tag:** `{TAG}`\n')
                       break
               else:
-                  print(f'  Release pas encore dispo ({rel_r.status_code})')
-
+                  print(f'  Release {rel_r.status_code}')
           else:
-              raise SystemExit('Timeout — Kaggle > 20 min')
-
+              raise SystemExit('Timeout > 20 min')
           PYEOF
 
-      - name: Upload video URL as artifact
+      - name: Upload video URL
         uses: actions/upload-artifact@v4
         with:
           name: video-url
