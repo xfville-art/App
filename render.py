@@ -1092,122 +1092,14 @@ def start():
 
         map_v = f"-map 0:{h264_idx}" if h264_idx is not None else "-map 0:v:0"
 
-        # ── Auto-crop bords carte + scale 9:16 plein écran ─────────
-        # Détecte les bandes grises/beiges de la carte Crados en analysant
-        # les colonnes/lignes de bord pixel par pixel via ffprobe + numpy.
-        # Puis crop précis + scale exacte W:H → zéro bande garantie.
-        def detect_card_borders(path):
-            """
-            Retourne (left, right, top, bottom) en pixels — marges à couper.
-            Lit 1 frame en rawvideo RGB via FFmpeg (zéro dépendance Python externe).
-            Compare chaque colonne/ligne de bord avec la colonne/ligne suivante —
-            s'arrête dès que la différence dépasse 15 (transition fond → contenu).
-            """
-            try:
-                src_info = ffprobe(path)
-                src_vs = [s for s in src_info.get("streams", [])
-                          if s.get("codec_type") == "video"]
-                if not src_vs:
-                    return 0, 0, 0, 0
-                VW = int(src_vs[0].get("width",  720))
-                VH = int(src_vs[0].get("height", 1280))
-                mid = max(duration(path) / 2, 0.5)
-
-                # Lire 1 frame en rawvideo rgb24 — aucune dépendance PIL/numpy
-                r2 = subprocess.run(
-                    f'ffmpeg -ss {mid:.2f} -i "{path}" -vframes 1 '
-                    f'-f rawvideo -pix_fmt rgb24 -vcodec rawvideo pipe:1 2>/dev/null',
-                    shell=True, capture_output=True
-                )
-                raw = r2.stdout
-                expected = VW * VH * 3
-                if len(raw) != expected:
-                    return 0, 0, 0, 0
-
-                # Moyenne d'une colonne (échantillonnage 1 ligne sur 4 pour la perf)
-                def col_mean(x):
-                    s = 0; n = 0
-                    for y in range(0, VH, 4):
-                        base = (y * VW + x) * 3
-                        s += raw[base] + raw[base+1] + raw[base+2]
-                        n += 1
-                    return s / n / 3
-
-                # Moyenne d'une ligne (échantillonnage 1 pixel sur 4)
-                def row_mean(y):
-                    s = 0; n = 0
-                    for x in range(0, VW, 4):
-                        base = (y * VW + x) * 3
-                        s += raw[base] + raw[base+1] + raw[base+2]
-                        n += 1
-                    return s / n / 3
-
-                THRESH = 15  # différence de luminosité pour détecter la rupture
-                MARGIN = 2   # pixels de marge de sécurité
-
-                # Gauche
-                left = 0
-                ref = col_mean(0)
-                for x in range(1, min(80, VW)):
-                    if abs(col_mean(x) - ref) > THRESH:
-                        left = max(0, x - MARGIN)
-                        break
-
-                # Droite
-                right = 0
-                ref = col_mean(VW - 1)
-                for x in range(VW - 2, max(VW - 80, 0), -1):
-                    if abs(col_mean(x) - ref) > THRESH:
-                        right = max(0, VW - 1 - x - MARGIN)
-                        break
-
-                # Haut
-                top = 0
-                ref = row_mean(0)
-                for y in range(1, min(80, VH)):
-                    if abs(row_mean(y) - ref) > THRESH:
-                        top = max(0, y - MARGIN)
-                        break
-
-                # Bas
-                bottom = 0
-                ref = row_mean(VH - 1)
-                for y in range(VH - 2, max(VH - 80, 0), -1):
-                    if abs(row_mean(y) - ref) > THRESH:
-                        bottom = max(0, VH - 1 - y - MARGIN)
-                        break
-
-                return left, right, top, bottom
-            except Exception as _e:
-                print(f"      detect_card_borders: {_e}")
-                return 0, 0, 0, 0
-
-        bl, br, bt, bb = detect_card_borders(raw)
-        print(f"  Clip {i} : bords détectés L={bl} R={br} T={bt} B={bb}")
-
-        # Construire le filtre crop si des bandes sont trouvées
-        src_info = ffprobe(raw)
-        src_vs = [s for s in src_info.get('streams', []) if s.get('codec_type') == 'video']
-        src_w = int(src_vs[0].get('width', int(W))) if src_vs else int(W)
-        src_h = int(src_vs[0].get('height', int(H))) if src_vs else int(H)
-
-        cw = src_w - bl - br
-        ch = src_h - bt - bb
-        # Forcer pairs
-        cw = cw - (cw % 2)
-        ch = ch - (ch % 2)
-        cx = bl
-        cy = bt
-
-        if bl + br + bt + bb > 4:
-            crop_filter = f"crop={cw}:{ch}:{cx}:{cy},"
-            print(f"      crop appliqué : {cw}x{ch}+{cx}+{cy}")
-        else:
-            crop_filter = ""
-
+        # ── Scale 9:16 plein écran — zoom 18% + crop centré ─────────
+        # Zoom 18% sur la source puis crop centré 720x1280.
+        # Coupe ~65px de chaque côté → élimine tous les bords de carte
+        # (fond gris, fond bokeh, marges blanches) quelle que soit la source.
+        # Simple, robuste, zéro dépendance externe.
         vf_scale = (
-            f"{crop_filter}"
-            f"scale={W}:{H}:flags=lanczos,"
+            f"scale=iw*1.18:ih*1.18:flags=lanczos,"
+            f"crop={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
             f"setsar=1,fps={fps}"
         )
 
