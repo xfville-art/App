@@ -120,22 +120,49 @@ def detect_silences(path, noise_db=-35, min_dur=0.10):
     return sorted(silences, key=lambda x: x[0])
 
 
+def _has_speech_after(silences, cut_t, clip_max, lookahead=0.8):
+    """
+    Retourne True si du dialogue existe dans [cut_t, cut_t+lookahead].
+    Permet de détecter si un silence n'est qu'une pause inter-mots.
+    """
+    for (s, e) in silences:
+        # S'il y a un intervalle de parole entre cut_t et cut_t+lookahead
+        # = une zone non couverte par un silence dans cette fenêtre
+        pass
+    # Construire les zones de parole après cut_t
+    speech_start = cut_t
+    for (s, e) in sorted(silences):
+        if e <= cut_t:
+            continue
+        if s <= cut_t:
+            speech_start = e  # silence englobe cut_t
+            continue
+        # Pause at (s,e) : speech exists in [speech_start, s]
+        if s - speech_start > 0.05 and s < cut_t + lookahead:
+            return True  # il y a de la parole avant le prochain silence
+        speech_start = e
+        if speech_start >= cut_t + lookahead:
+            break
+    return False
+
+
 def find_cut_out(silences, target, clip_max, tolerance):
     """
     Trouve le meilleur point de coupe OUT.
 
-    Priorite :
-      1. Midpoint de la pause la plus proche de target (dans +/-tolerance)
-      2. End-edge de la pause si mid depasse clip_max
-      3. Start-edge de la pause
-      4. target brut (fallback)
+    Priorité : trouver un silence APRÈS lequel il n'y a plus de dialogue
+    dans les 0.8s suivantes (évite de couper au milieu d'une phrase).
+    Cherche d'abord les silences proches de target, puis s'étend vers
+    la fin du clip si du dialogue suit.
 
     Retourne (cut_time, label). cut_time est toujours <= clip_max.
     """
+    LOOKAHEAD = 0.8   # secondes : si du dialogue suit dans cette fenêtre → pas de coupe
+
     window_lo = target - tolerance
     window_hi = target + tolerance
 
-    # Construire les candidats : silences qui chevauchent la fenetre
+    # Candidats : silences dans la fenêtre [target-tol, target+tol]
     candidates = []
     for (s, e) in silences:
         if e < window_lo or s > window_hi:
@@ -146,21 +173,30 @@ def find_cut_out(silences, target, clip_max, tolerance):
     candidates.sort(key=lambda x: x[0])
 
     for (dist, mid, s, e) in candidates:
-        # Priorité : fin du silence (après la dernière syllabe) — pas le milieu
-        # Évite de couper une phrase avant la fin du dernier mot
-        if e <= clip_max:
-            print(f"      snap OUT -> silence end  {e:.3f}s  "
-                  f"[{s:.2f}-{e:.2f}]  delta={dist:.3f}s")
-            return e, "silence_end"
-        if mid <= clip_max:
-            print(f"      snap OUT -> silence mid  {mid:.3f}s  "
-                  f"[{s:.2f}-{e:.2f}]")
-            return mid, "silence_mid"
-        if s >= 0.5:
-            cut = min(s, clip_max)
-            print(f"      snap OUT -> silence start {cut:.3f}s  "
-                  f"[{s:.2f}-{e:.2f}]")
-            return cut, "silence_start"
+        cut = e if e <= clip_max else (mid if mid <= clip_max else None)
+        if cut is None:
+            continue
+        # Vérifier qu'il n'y a pas de parole juste après ce silence
+        if _has_speech_after(silences, cut, clip_max, LOOKAHEAD):
+            # Il y a encore du dialogue après → chercher un silence plus tard
+            print(f"      skip silence [{s:.2f}-{e:.2f}] : parole détectée après {cut:.3f}s")
+            continue
+        print(f"      snap OUT -> silence end  {cut:.3f}s  "
+              f"[{s:.2f}-{e:.2f}]  delta={dist:.3f}s")
+        return cut, "silence_end"
+
+    # Fallback : prendre le DERNIER silence avant clip_max
+    # (garantit qu'on inclut toute la phrase finale)
+    last_cut = None
+    for (s, e) in sorted(silences):
+        if s > clip_max:
+            break
+        candidate = min(e, clip_max)
+        if candidate >= target - tolerance:
+            last_cut = candidate
+    if last_cut is not None:
+        print(f"      snap OUT -> last silence {last_cut:.3f}s (phrase complète)")
+        return last_cut, "last_silence"
 
     cut = min(target, clip_max)
     print(f"      snap OUT -> fallback {cut:.3f}s  "
