@@ -1099,58 +1099,84 @@ def start():
         def detect_card_borders(path):
             """
             Retourne (left, right, top, bottom) en pixels — marges à couper.
-            Compare les colonnes/lignes de bord avec le centre de l'image.
-            Tolère les fonds gris, beige, blanc et toute couleur non-contenu.
+            Lit 1 frame en rawvideo RGB via FFmpeg (zéro dépendance Python externe).
+            Compare chaque colonne/ligne de bord avec la colonne/ligne suivante —
+            s'arrête dès que la différence dépasse 15 (transition fond → contenu).
             """
             try:
-                import tempfile, os
-                tmp = tempfile.mktemp(suffix='.png')
-                # Extraire 1 frame au milieu du clip
+                src_info = ffprobe(path)
+                src_vs = [s for s in src_info.get("streams", [])
+                          if s.get("codec_type") == "video"]
+                if not src_vs:
+                    return 0, 0, 0, 0
+                VW = int(src_vs[0].get("width",  720))
+                VH = int(src_vs[0].get("height", 1280))
                 mid = max(duration(path) / 2, 0.5)
+
+                # Lire 1 frame en rawvideo rgb24 — aucune dépendance PIL/numpy
                 r2 = subprocess.run(
-                    f'ffmpeg -ss {mid:.2f} -i "{path}" -vframes 1 "{tmp}" -y 2>/dev/null',
+                    f'ffmpeg -ss {mid:.2f} -i "{path}" -vframes 1 '
+                    f'-f rawvideo -pix_fmt rgb24 -vcodec rawvideo pipe:1 2>/dev/null',
                     shell=True, capture_output=True
                 )
-                if not os.path.exists(tmp):
+                raw = r2.stdout
+                expected = VW * VH * 3
+                if len(raw) != expected:
                     return 0, 0, 0, 0
-                from PIL import Image as PILImage
-                import numpy as _np
-                img = _np.array(PILImage.open(tmp).convert('RGB'))
-                os.unlink(tmp)
-                H_img, W_img = img.shape[:2]
 
-                def find_border(axis, from_end=False):
-                    """Trouve la largeur de bande uniforme sur un bord."""
-                    # Référence : colonne/ligne du bord
-                    if axis == 'left':
-                        ref = img[:, 0, :].astype(float)
-                        seq = range(0, min(80, W_img))
-                        def get(i): return img[:, i, :].astype(float)
-                    elif axis == 'right':
-                        ref = img[:, W_img-1, :].astype(float)
-                        seq = range(W_img-1, max(W_img-80, 0), -1)
-                        def get(i): return img[:, i, :].astype(float)
-                    elif axis == 'top':
-                        ref = img[0, :, :].astype(float)
-                        seq = range(0, min(80, H_img))
-                        def get(i): return img[i, :, :].astype(float)
-                    else:  # bottom
-                        ref = img[H_img-1, :, :].astype(float)
-                        seq = range(H_img-1, max(H_img-80, 0), -1)
-                        def get(i): return img[i, :, :].astype(float)
+                # Moyenne d'une colonne (échantillonnage 1 ligne sur 4 pour la perf)
+                def col_mean(x):
+                    s = 0; n = 0
+                    for y in range(0, VH, 4):
+                        base = (y * VW + x) * 3
+                        s += raw[base] + raw[base+1] + raw[base+2]
+                        n += 1
+                    return s / n / 3
 
-                    border = 0
-                    for idx in seq:
-                        diff = _np.abs(get(idx) - ref).mean()
-                        if diff > 12:
-                            break
-                        border += 1
-                    return max(0, border - 2)  # -2 px de marge sécurité
+                # Moyenne d'une ligne (échantillonnage 1 pixel sur 4)
+                def row_mean(y):
+                    s = 0; n = 0
+                    for x in range(0, VW, 4):
+                        base = (y * VW + x) * 3
+                        s += raw[base] + raw[base+1] + raw[base+2]
+                        n += 1
+                    return s / n / 3
 
-                left   = find_border('left')
-                right  = find_border('right')
-                top    = find_border('top')
-                bottom = find_border('bottom')
+                THRESH = 15  # différence de luminosité pour détecter la rupture
+                MARGIN = 2   # pixels de marge de sécurité
+
+                # Gauche
+                left = 0
+                ref = col_mean(0)
+                for x in range(1, min(80, VW)):
+                    if abs(col_mean(x) - ref) > THRESH:
+                        left = max(0, x - MARGIN)
+                        break
+
+                # Droite
+                right = 0
+                ref = col_mean(VW - 1)
+                for x in range(VW - 2, max(VW - 80, 0), -1):
+                    if abs(col_mean(x) - ref) > THRESH:
+                        right = max(0, VW - 1 - x - MARGIN)
+                        break
+
+                # Haut
+                top = 0
+                ref = row_mean(0)
+                for y in range(1, min(80, VH)):
+                    if abs(row_mean(y) - ref) > THRESH:
+                        top = max(0, y - MARGIN)
+                        break
+
+                # Bas
+                bottom = 0
+                ref = row_mean(VH - 1)
+                for y in range(VH - 2, max(VH - 80, 0), -1):
+                    if abs(row_mean(y) - ref) > THRESH:
+                        bottom = max(0, VH - 1 - y - MARGIN)
+                        break
+
                 return left, right, top, bottom
             except Exception as _e:
                 print(f"      detect_card_borders: {_e}")
